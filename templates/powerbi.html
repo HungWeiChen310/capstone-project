@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <title>PowerBI 報表展示</title>
+    <!-- 載入 PowerBI Client SDK -->
+    <script src="https://cdn.powerbi.com/libs/powerbi-client/latest/powerbi.min.js"></script>
+</head>
+<body>
+    <h2>PowerBI 報表展示</h2>
+    <div id="reportContainer" style="height:800px;"></div>
+    <script>
+        // 取得後端傳入的嵌入設定
+        var embedConfig = {
+            type: 'report',
+            tokenType: powerbi.models.TokenType.Embed,
+            accessToken: "{{ config.accessToken }}",
+            embedUrl: "{{ config.embedUrl }}",
+            id: "{{ config.reportId }}",
+            settings: {
+                filterPaneEnabled: false,
+                navContentPaneEnabled: true
+            }
+        };
+
+        // 將報表嵌入到網頁中
+        var reportContainer = document.getElementById('reportContainer');
+        powerbi.embed(reportContainer, embedConfig);
+    </script>
+</body>
+</html>

@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LINE Bot + OpenAI + PowerBI 整合服務</title>
+    <style>
+        :root {
+            --primary-color: #00c300;
+            --primary-dark: #00a000;
+            --secondary-color: #4169E1;
+            --secondary-dark: #3454B4;
+            --gray-light: #f5f5f5;
+            --gray: #e0e0e0;
+            --gray-dark: #666;
+            --text-dark: #333;
+            --shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        
+        * {
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: Arial, "Microsoft JhengHei", sans-serif;
+            line-height: 1.6;
+            margin: 0;
+            padding: 0;
+            background-color: var(--gray-light);
+            color: var(--text-dark);
+        }
+        
+        header {
+            background-color: var(--primary-color);
+            color: white;
+            padding: 1.5rem 2rem;
+            text-align: center;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+        
+        .overview {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 2rem;
+            margin-bottom: 3rem;
+        }
+        
+        .card {
+            background: white;
+            padding: 1.5rem;
+            border-radius: 8px;
+            box-shadow: var(--shadow);
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+        
+        .card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.15);
+        }
+        
+        .card h2 {
+            color: var(--primary-color);
+            margin-top: 0;
+            border-bottom: 1px solid var(--gray);
+            padding-bottom: 0.5rem;
+        }
+        
+        .feature {
+            margin-bottom: 2rem;
+            background: white;
+            padding: 2rem;
+            border-radius: 8px;
+            box-shadow: var(--shadow);
+        }
+        
+        .feature h2 {
+            color: var(--text-dark);
+            margin-top: 0;
+        }
+        
+        .status {
+            display: inline-block;
+            padding: 0.3rem 0.8rem;
+            border-radius: 4px;
+            font-weight: bold;
+        }
+        
+        .status-ok {
+            background: var(--primary-color);
+            color: white;
+        }
+        
+        .status-warning {
+            background: #FFC107;
+            color: #333;
+        }
+        
+        .status-error {
+            background: #F44336;
+            color: white;
+        }
+        
+        a.btn {
+            display: inline-block;
+            padding: 0.7rem 1.5rem;
+            background-color: var(--primary-color);
+            color: white;
+            text-decoration: none;
+            border-radius: 4px;
+            font-weight: bold;
+            transition: background-color 0.3s ease;
+        }
+        
+        a.btn:hover {
+            background-color: var(--primary-dark);
+            text-decoration: none;
+        }
+        
+        a.btn-secondary {
+            background-color: var(--secondary-color);
+        }
+        
+        a.btn-secondary:hover {
+            background-color: var(--secondary-dark);
+        }
+        
+        a {
+            color: var(--secondary-color);
+            text-decoration: none;
+            transition: color 0.3s ease;
+        }
+        
+        a:hover {
+            color: var(--secondary-dark);
+            text-decoration: underline;
+        }
+        
+        .feature-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 1.5rem;
+            margin: 2rem 0;
+        }
+        
+        .feature-item {
+            background: var(--gray-light);
+            padding: 1.5rem;
+            border-radius: 8px;
+            text-align: center;
+        }
+        
+        .feature-icon {
+            font-size: 2.5rem;
+            margin-bottom: 1rem;
+            color: var(--primary-color);
+        }
+        
+        footer {
+            background: var(--text-dark);
+            color: white;
+            text-align: center;
+            padding: 2rem;
+            margin-top: 3rem;
+        }
+        
+        .status-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 1rem 0;
+        }
+        
+        .status-table th,
+        .status-table td {
+            padding: 0.8rem;
+            text-align: left;
+            border-bottom: 1px solid var(--gray);
+        }
+        
+        .status-table th {
+            color: var(--gray-dark);
+        }
+        
+        .admin-link {
+            margin-top: 2rem;
+            text-align: center;
+        }
+        
+        /* QR Code and Image styling */
+        .qr-container {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 2rem;
+            margin: 2rem 0;
+            flex-wrap: wrap;
+        }
+        
+        .qr-box {
+            text-align: center;
+        }
+        
+        .qr-code {
+            border: 10px solid white;
+            border-radius: 10px;
+            box-shadow: var(--shadow);
+            max-width: 200px;
+            height: auto;
+        }
+        
+        .mockup {
+            max-width: 300px;
+            height: auto;
+            border-radius: 20px;
+            box-shadow: var(--shadow);
+        }
+        
+        /* Responsive adjustments */
+        @media (max-width: 768px) {
+            .container {
+                padding: 1rem;
+            }
+            
+            .overview {
+                grid-template-columns: 1fr;
+                gap: 1rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>LINE Bot + OpenAI + PowerBI 整合服務</h1>
+        <p>智能聊天機器人與資料視覺化的完美結合</p>
+    </header>
+    
+    <div class="container">
+        <div class="overview">
+            <div class="card">
+                <h2>LINE Bot 智能對話</h2>
+                <p>透過 OpenAI 技術提供即時、專業的回覆，解答您的技術問題。支援多種語言，包括繁體中文、簡體中文、英文、日文和韓文。</p>
+                <p><a href="#line-bot-features" class="btn">了解更多</a></p>
+            </div>
+            
+            <div class="card">
+                <h2>PowerBI 報表整合</h2>
+                <p>直接在 LINE 中請求查看 PowerBI 報表，或使用網頁介面深入探索您的數據，做出更明智的決策。</p>
+                <p><a href="/powerbi" class="btn btn-secondary">查看報表</a></p>
+            </div>
+            
+            <div class="card">
+                <h2>多語言支援</h2>
+                <p>智能助理支援多種語言，包括繁體中文、簡體中文、英文、日文和韓文，只需簡單的命令即可切換語言偏好。</p>
+                <p><a href="#language-support" class="btn">語言選項</a></p>
+            </div>
+        </div>
+        
+        <div class="feature" id="line-bot-features">
+            <h2>LINE Bot 功能特色</h2>
+            <p>本服務已成功整合 LINE Messaging API 與 OpenAI，可在 LINE 應用程式中進行智能對話。使用以下功能增強您的體驗：</p>
+            
+            <div class="feature-grid">
+                <div class="feature-item">
+                    <div class="feature-icon">💬</div>
+                    <h3>智能對話</h3>
+                    <p>基於 OpenAI 的 AI 技術，提供精確且有幫助的回答</p>
+                </div>
+                <div class="feature-item">
+                    <div class="feature-icon">📊</div>
+                    <h3>報表查詢</h3>
+                    <p>輸入「報表」或「powerbi」直接獲取 PowerBI 報表連結</p>
+                </div>
+                <div class="feature-item">
+                    <div class="feature-icon">🌐</div>
+                    <h3>多語言支援</h3>
+                    <p>使用「language:」命令切換您偏好的語言</p>
+                </div>
+                <div class="feature-item">
+                    <div class="feature-icon">❓</div>
+                    <h3>即時幫助</h3>
+                    <p>輸入「help」或「幫助」獲取使用指南</p>
+                </div>
+            </div>
+            
+            <div class="qr-container">
+                <div class="qr-box">
+                    <h3>掃描 QR Code 加入好友</h3>
+                    <img src="/static/qrcode.png" alt="LINE Bot QR Code" class="qr-code">
+                    <p>或搜尋 LINE ID: @yourlinebot</p>
+                </div>
+                <div>
+                    <img src="/static/line-mockup.png" alt="LINE Bot 示範截圖" class="mockup">
+                </div>
+            </div>
+        </div>
+        
+        <div class="feature" id="language-support">
+            <h2>多語言支援</h2>
+            <p>本服務支援多種語言，使用以下命令可以切換語言：</p>
+            
+            <table class="status-table">
+                <thead>
+                    <tr>
+                        <th>命令</th>
+                        <th>語言</th>
+                        <th>說明</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><code>language:zh-Hant</code></td>
+                        <td>繁體中文</td>
+                        <td>預設語言，適合台灣、香港等地區使用者</td>
+                    </tr>
+                    <tr>
+                        <td><code>language:zh-Hans</code></td>
+                        <td>简体中文</td>
+                        <td>适合中国大陆地区用户</td>
+                    </tr>
+                    <tr>
+                        <td><code>language:en</code></td>
+                        <td>English</td>
+                        <td>English response for international users</td>
+                    </tr>
+                    <tr>
+                        <td><code>language:ja</code></td>
+                        <td>日本語</td>
+                        <td>日本のユーザー向けの日本語応答</td>
+                    </tr>
+                    <tr>
+                        <td><code>language:ko</code></td>
+                        <td>한국어</td>
+                        <td>한국 사용자를 위한 한국어 응답</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+        
+        <div class="feature">
+            <h2>系統狀態</h2>
+            <table class="status-table">
+                <tr>
+                    <th>服務</th>
+                    <th>狀態</th>
+                </tr>
+                <tr>
+                    <td>伺服器</td>
+                    <td><span class="status status-ok">正常運行</span></td>
+                </tr>
+                <tr>
+                    <td>LINE Bot API</td>
+                    <td><span class="status status-ok">已連接</span></td>
+                </tr>
+                <tr>
+                    <td>OpenAI API</td>
+                    <td><span class="status status-ok">已連接</span></td>
+                </tr>
+                <tr>
+                    <td>PowerBI API</td>
+                    <td><span class="status status-ok">已連接</span></td>
+                </tr>
+                <tr>
+                    <td>資料庫</td>
+                    <td><span class="status status-ok">已連接</span></td>
+                </tr>
+            </table>
+            
+            <div class="admin-link">
+                <a href="/admin/login" class="btn">管理員入口</a>
+            </div>
+        </div>
+    </div>
+    
+    <footer>
+        <p>&copy; 2025 LINE Bot + OpenAI + PowerBI 整合服務</p>
+        <p>如需更多技術文件，請參考 <a href="https://github.com/yourusername/yourrepository" target="_blank">GitHub 專案庫</a></p>
+    </footer>
+</body>
+</html>

@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>對話記錄 - LINE Bot 管理系統</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f5f5f5;
+            margin: 0;
+            padding: 0;
+        }
+        header {
+            background-color: #00c300;
+            color: white;
+            padding: 1rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .container {
+            padding: 2rem;
+            max-width: 1000px;
+            margin: 0 auto;
+        }
+        .panel {
+            background-color: white;
+            border-radius: 8px;
+            padding: 1.5rem;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            margin-bottom: 2rem;
+        }
+        h2 {
+            color: #333;
+            margin-top: 0;
+            border-bottom: 1px solid #eee;
+            padding-bottom: 0.5rem;
+        }
+        .user-info {
+            margin-bottom: 2rem;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 2rem;
+        }
+        .info-item {
+            margin-bottom: 0.5rem;
+        }
+        .info-label {
+            font-weight: bold;
+            margin-right: 0.5rem;
+        }
+        .btn {
+            display: inline-block;
+            padding: 0.5rem 1rem;
+            background-color: #00c300;
+            color: white;
+            text-decoration: none;
+            border-radius: 4px;
+            font-size: 0.9rem;
+        }
+        .btn:hover {
+            background-color: #00a000;
+        }
+        .btn-secondary {
+            background-color: #6c757d;
+        }
+        .btn-secondary:hover {
+            background-color: #5a6268;
+        }
+        .conversation {
+            margin-top: 2rem;
+        }
+        .message {
+            margin-bottom: 1.5rem;
+            display: flex;
+        }
+        .message-user {
+            flex-direction: row-reverse;
+        }
+        .message-assistant, .message-system {
+            flex-direction: row;
+        }
+        .message-content {
+            max-width: 70%;
+            padding: 1rem;
+            border-radius: 8px;
+            position: relative;
+        }
+        .message-user .message-content {
+            background-color: #DCF8C6;
+            margin-left: auto;
+        }
+        .message-assistant .message-content {
+            background-color: #ECECEC;
+        }
+        .message-system .message-content {
+            background-color: #F8F8F8;
+            border: 1px dashed #ccc;
+            color: #666;
+        }
+        .message-role {
+            font-size: 0.8rem;
+            color: #666;
+            margin-bottom: 0.3rem;
+        }
+        .message p {
+            margin: 0;
+        }
+        .actions {
+            display: flex;
+            gap: 1rem;
+            margin-bottom: 1rem;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>對話記錄</h1>
+        <div>
+            <a href="{{ url_for('admin_dashboard') }}" class="btn btn-secondary">返回儀表板</a>
+        </div>
+    </header>
+    
+    <div class="container">
+        <div class="panel">
+            <h2>使用者資訊</h2>
+            <div class="user-info">
+                <div>
+                    <div class="info-item">
+                        <span class="info-label">使用者ID:</span>
+                        <span>{{ user_id }}</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">偏好語言:</span>
+                        <span>{{ user_info.language }}</span>
+                    </div>
+                </div>
+                <div>
+                    <div class="info-item">
+                        <span class="info-label">對話數量:</span>
+                        <span>{{ conversation|length }}</span>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="actions">
+                <a href="{{ url_for('admin_dashboard') }}" class="btn btn-secondary">返回儀表板</a>
+            </div>
+            
+            <div class="conversation">
+                <h3>對話記錄</h3>
+                
+                {% for message in conversation %}
+                <div class="message message-{{ message.role }}">
+                    <div class="message-content">
+                        <div class="message-role">{{ message.role }}</div>
+                        <p>{{ message.content|nl2br|safe }}</p>
+                    </div>
+                </div>
+                {% endfor %}
+                
+                {% if not conversation %}
+                <p>尚無對話記錄</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</body>
+</html>
