@@ -1,4 +1,4 @@
-flask==2.2.3
+flask==2.2.5
 werkzeug==2.2.3
 requests==2.31.0
 line-bot-sdk==3.1.0
