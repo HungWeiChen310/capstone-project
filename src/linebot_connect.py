@@ -1077,11 +1077,20 @@ if __name__ == "__main__":
     debug_mode = os.environ.get("FLASK_DEBUG", "False").lower() == "true"
     port = int(os.environ.get("PORT", 5000))
     
-    # Use Flask's built-in adhoc SSL certificates (requires pyOpenSSL)
+# Use Flask's built-in adhoc SSL certificates (requires pyOpenSSL)
+    # ssl_context = 'adhoc'
+    ssl_cert = os.environ.get("SSL_CERT_PATH")
+    ssl_key = os.environ.get("SSL_KEY_PATH")
+    if ssl_cert and ssl_key:
+        ssl_context = (ssl_cert, ssl_key)
+    else:
+        print("SSL_CERT_PATH and SSL_KEY_PATH not set. Running without SSL.")
+        ssl_context = None
+    
     print(f"Starting Flask app with SSL on port {port}")
     app.run(
         host="0.0.0.0", 
         port=port, 
         debug=debug_mode,
-        ssl_context='adhoc'  # This creates temporary certificates automatically
+        ssl_context=ssl_context  # This creates temporary certificates automatically
     )
