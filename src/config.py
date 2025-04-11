@@ -1,79 +1,70 @@
-import os
 import logging
+import os
 import sys
 from dotenv import load_dotenv
-
 # Load environment variables from .env file if it exists
 load_dotenv()
-
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler('app.log'),
-    ]
+        logging.FileHandler("app.log"),
+    ],
 )
 logger = logging.getLogger(__name__)
 
+
 class Config:
     """應用程式配置，集中管理所有環境變數"""
-    
     # 一般配置
-    DEBUG = os.getenv('FLASK_DEBUG', 'False').lower() == 'true'
-    PORT = int(os.getenv('PORT', 5000))
-    
+    DEBUG = os.getenv("FLASK_DEBUG", "False").lower() == "true"
+    PORT = int(os.getenv("PORT", 5000))
     # OpenAI 配置
-    OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
-    
+    OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
     # LINE Bot 配置
-    LINE_CHANNEL_ACCESS_TOKEN = os.getenv('LINE_CHANNEL_ACCESS_TOKEN')
-    LINE_CHANNEL_SECRET = os.getenv('LINE_CHANNEL_SECRET')
-    
-    
+    LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
+    LINE_CHANNEL_SECRET = os.getenv("LINE_CHANNEL_SECRET")
     # 驗證模式：嚴格 (strict) 或寬鬆 (loose)
-    VALIDATION_MODE = os.getenv('VALIDATION_MODE', 'strict')
-    
+    VALIDATION_MODE = os.getenv("VALIDATION_MODE", "strict")
+
     @classmethod
     def validate(cls, exit_on_failure=None):
         """
         驗證必需的環境變數是否存在
-        
         參數:
-            exit_on_failure: 
+            exit_on_failure:
                 - 如果為 True，驗證失敗時會終止程序
-                - 如果為 False，驗證失敗時只會拋出例外 
+                - 如果為 False，驗證失敗時只會拋出例外
                 - 如果為 None，則根據 VALIDATION_MODE 環境變數決定行為
         """
         missing_vars = []
-        
         # 檢查 OpenAI 設定
         if not cls.OPENAI_API_KEY:
-            missing_vars.append('OPENAI_API_KEY')
-        
+            missing_vars.append("OPENAI_API_KEY")
         # 檢查 LINE Bot 設定
         if not cls.LINE_CHANNEL_ACCESS_TOKEN:
-            missing_vars.append('LINE_CHANNEL_ACCESS_TOKEN')
+            missing_vars.append("LINE_CHANNEL_ACCESS_TOKEN")
         if not cls.LINE_CHANNEL_SECRET:
-            missing_vars.append('LINE_CHANNEL_SECRET')
-        
+            missing_vars.append("LINE_CHANNEL_SECRET")
         if missing_vars:
             error_msg = f"缺少以下必要環境變數: {', '.join(missing_vars)}"
             logger.error(error_msg)
-            
             # 決定驗證失敗行為
-            should_exit = exit_on_failure if exit_on_failure is not None else cls.VALIDATION_MODE.lower() == 'strict'
-            
+            should_exit = (
+                exit_on_failure
+                if exit_on_failure is not None
+                else cls.VALIDATION_MODE.lower() == "strict"
+            )
             # 嚴格模式或明確要求下直接中斷程序
             if should_exit:
                 logger.critical("驗證失敗，程序將終止")
                 sys.exit(1)
-                
             # 否則拋出例外，讓呼叫者決定如何處理
             raise ValueError(error_msg)
-        
         return True
+
 
 # 應用程序啟動時嘗試驗證配置
 try:
@@ -81,7 +72,7 @@ try:
     Config.validate()
     logger.info("環境變數驗證成功")
 except ValueError as e:
-    is_testing = os.environ.get('TESTING', 'False').lower() == 'true'
+    is_testing = os.environ.get("TESTING", "False").lower() == "true"
     if is_testing:
         # 測試環境下只發出警告
         logger.warning(f"測試環境：環境變數驗證失敗，但將繼續執行：{e}")
