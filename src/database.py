@@ -1,264 +1,329 @@
+"""Database module for handling conversation records and user preferences."""
+
 import logging
 import os
-import sqlite3
+import pyodbc
 
 # 設定日誌紀錄器
 logger = logging.getLogger(__name__)
 
 
 class Database:
-    """處理對話記錄與使用者偏好儲存的資料庫處理程序"""
+    """Handle database operations for conversation records and user preferences."""
 
-    def __init__(self, db_path="data/conversations.db"):
-        """初始化資料庫連線"""
-        self.db_path = db_path
+    def __init__(self, server="localhost", database="conversations"):
+        """Initialize database connection.
+
+        Args:
+            server (str): Database server address. Defaults to "localhost".
+            database (str): Database name. Defaults to "conversations".
+        """
+        self.connection_string = (
+            "DRIVER={ODBC Driver 17 for SQL Server};"
+            f"SERVER={server};"
+            f"DATABASE={database};"
+            "Trusted_Connection=yes;"
+        )
         self._initialize_db()
 
+    def _get_connection(self):
+        """Create and return a database connection.
+
+        Returns:
+            pyodbc.Connection: A connection to the database.
+        """
+        return pyodbc.connect(self.connection_string)
+
     def _initialize_db(self):
-        """如果資料表尚未存在，則建立必要的表格"""
+        """Create necessary tables if they don't exist."""
         try:
-            # 確保資料夾存在
-            db_dir = os.path.dirname(self.db_path)
-            if db_dir and not os.path.exists(db_dir):
-                os.makedirs(db_dir)
-            with sqlite3.connect(self.db_path) as conn:
+            with self._get_connection() as conn:
                 cursor = conn.cursor()
 
-                # 建立對話記錄表
+                # Create conversations table
                 cursor.execute(
                     """
-                    CREATE TABLE IF NOT EXISTS conversations (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        user_id TEXT NOT NULL,
-                        role TEXT NOT NULL,
-                        content TEXT NOT NULL,
-                        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+                    IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'conversations')
+                    CREATE TABLE conversations (
+                        id INT IDENTITY(1,1) PRIMARY KEY,
+                        user_id NVARCHAR(255) NOT NULL,
+                        role NVARCHAR(50) NOT NULL,
+                        content NVARCHAR(MAX) NOT NULL,
+                        timestamp DATETIME2 DEFAULT GETDATE()
                     )
                     """
                 )
-                # 建立使用者偏好表
+
+                # Create user_preferences table
                 cursor.execute(
                     """
-                    CREATE TABLE IF NOT EXISTS user_preferences (
-                        user_id TEXT PRIMARY KEY,
-                        language TEXT DEFAULT "zh-Hant",
-                        last_active DATETIME DEFAULT CURRENT_TIMESTAMP
+                    IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'user_preferences')
+                    CREATE TABLE user_preferences (
+                        user_id NVARCHAR(255) PRIMARY KEY,
+                        language NVARCHAR(10) DEFAULT N'zh-Hant',
+                        last_active DATETIME2 DEFAULT GETDATE(),
+                        is_admin BIT DEFAULT 0,
+                        responsible_area NVARCHAR(255)
                     )
                     """
                 )
-                # 建立設備表
+
+                # Create equipment table
                 cursor.execute(
                     """
-                    CREATE TABLE IF NOT EXISTS equipment (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        equipment_id TEXT NOT NULL UNIQUE,
-                        name TEXT NOT NULL,
-                        type TEXT NOT NULL,
-                        location TEXT,
-                        status TEXT DEFAULT "normal",
-                        last_updated DATETIME DEFAULT CURRENT_TIMESTAMP
+                    IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'equipment')
+                    CREATE TABLE equipment (
+                        id INT IDENTITY(1,1) PRIMARY KEY,
+                        equipment_id NVARCHAR(255) NOT NULL UNIQUE,
+                        name NVARCHAR(255) NOT NULL,
+                        type NVARCHAR(100) NOT NULL,
+                        location NVARCHAR(255),
+                        status NVARCHAR(50) DEFAULT N'normal',
+                        last_updated DATETIME2 DEFAULT GETDATE()
                     )
                     """
                 )
-                # 建立設備監測指標表
+
+                # Create equipment_metrics table
                 cursor.execute(
                     """
-                    CREATE TABLE IF NOT EXISTS equipment_metrics (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        equipment_id TEXT NOT NULL,
-                        metric_type TEXT NOT NULL,
-                        value REAL NOT NULL,
-                        threshold_min REAL,
-                        threshold_max REAL,
-                        unit TEXT,
-                        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'equipment_metrics')
+                    CREATE TABLE equipment_metrics (
+                        id INT IDENTITY(1,1) PRIMARY KEY,
+                        equipment_id NVARCHAR(255) NOT NULL,
+                        metric_type NVARCHAR(100) NOT NULL,
+                        value FLOAT NOT NULL,
+                        threshold_min FLOAT,
+                        threshold_max FLOAT,
+                        unit NVARCHAR(50),
+                        timestamp DATETIME2 DEFAULT GETDATE(),
                         FOREIGN KEY (equipment_id) REFERENCES equipment(equipment_id)
                     )
                     """
                 )
-                # 建立設備運轉紀錄表
+
+                # Create equipment_operation_logs table
                 cursor.execute(
                     """
-                    CREATE TABLE IF NOT EXISTS equipment_operation_logs (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        equipment_id TEXT NOT NULL,
-                        operation_type TEXT NOT NULL,
-                        start_time DATETIME,
-                        end_time DATETIME,
-                        lot_id TEXT,
-                        product_id TEXT,
-                        yield_rate REAL,
-                        operator_id TEXT,
-                        notes TEXT,
+                    IF NOT EXISTS (
+                        SELECT * FROM sys.tables WHERE name = 'equipment_operation_logs'
+                    )
+                    CREATE TABLE equipment_operation_logs (
+                        id INT IDENTITY(1,1) PRIMARY KEY,
+                        equipment_id NVARCHAR(255) NOT NULL,
+                        operation_type NVARCHAR(100) NOT NULL,
+                        start_time DATETIME2,
+                        end_time DATETIME2,
+                        lot_id NVARCHAR(255),
+                        product_id NVARCHAR(255),
+                        yield_rate FLOAT,
+                        operator_id NVARCHAR(255),
+                        notes NVARCHAR(MAX),
                         FOREIGN KEY (equipment_id) REFERENCES equipment(equipment_id)
                     )
                     """
                 )
-                # 建立警報記錄表
+
+                # Create alert_history table
                 cursor.execute(
                     """
-                    CREATE TABLE IF NOT EXISTS alert_history (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        equipment_id TEXT NOT NULL,
-                        alert_type TEXT NOT NULL,
-                        severity TEXT NOT NULL,
-                        message TEXT NOT NULL,
-                        is_resolved INTEGER DEFAULT 0,
-                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                        resolved_at DATETIME,
-                        resolved_by TEXT,
-                        resolution_notes TEXT,
+                    IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'alert_history')
+                    CREATE TABLE alert_history (
+                        id INT IDENTITY(1,1) PRIMARY KEY,
+                        equipment_id NVARCHAR(255) NOT NULL,
+                        alert_type NVARCHAR(100) NOT NULL,
+                        severity NVARCHAR(50) NOT NULL,
+                        message NVARCHAR(MAX) NOT NULL,
+                        is_resolved BIT DEFAULT 0,
+                        created_at DATETIME2 DEFAULT GETDATE(),
+                        resolved_at DATETIME2,
+                        resolved_by NVARCHAR(255),
+                        resolution_notes NVARCHAR(MAX),
                         FOREIGN KEY (equipment_id) REFERENCES equipment(equipment_id)
                     )
                     """
                 )
-                # 建立使用者訂閱設備表
+
+                # Create user_equipment_subscriptions table
                 cursor.execute(
                     """
-                    CREATE TABLE IF NOT EXISTS user_equipment_subscriptions (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        user_id TEXT NOT NULL,
-                        equipment_id TEXT NOT NULL,
-                        notification_level TEXT DEFAULT "all",
-                        subscribed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                        UNIQUE(user_id, equipment_id)
+                    IF NOT EXISTS (
+                        SELECT * FROM sys.tables WHERE name = 'user_equipment_subscriptions'
+                    )
+                    CREATE TABLE user_equipment_subscriptions (
+                        id INT IDENTITY(1,1) PRIMARY KEY,
+                        user_id NVARCHAR(255) NOT NULL,
+                        equipment_id NVARCHAR(255) NOT NULL,
+                        notification_level NVARCHAR(50) DEFAULT N'all',
+                        subscribed_at DATETIME2 DEFAULT GETDATE(),
+                        CONSTRAINT UQ_user_equipment UNIQUE(user_id, equipment_id)
                     )
                     """
                 )
-                # 為 user_preferences 表新增 is_admin 與 responsible_area 欄位（若尚未存在）
-                try:
-                    cursor.execute("SELECT is_admin FROM user_preferences LIMIT 1")
-                except sqlite3.OperationalError:
-                    cursor.execute(
-                        "ALTER TABLE user_preferences ADD COLUMN is_admin INTEGER DEFAULT 0"
-                    )
-                try:
-                    cursor.execute("SELECT responsible_area FROM user_preferences LIMIT 1")
-                except sqlite3.OperationalError:
-                    cursor.execute(
-                        "ALTER TABLE user_preferences ADD COLUMN responsible_area TEXT"
-                    )
                 conn.commit()
-                logger.info("資料庫初始化成功，包含設備監控相關資料表")
+                logger.info("Database initialized successfully with equipment monitoring tables")
         except Exception as e:
-            logger.exception(f"資料庫初始化失敗：{e}")
+            logger.exception(f"Database initialization failed: {e}")
             raise
 
     def add_message(self, user_id, role, content):
-        """加入一筆新的對話記錄"""
+        """Add a new conversation message.
+
+        Args:
+            user_id (str): The user identifier.
+            role (str): The role of the message sender.
+            content (str): The message content.
+
+        Returns:
+            bool: True if successful, False otherwise.
+        """
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with self._get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute(
-                    "INSERT INTO conversations (user_id, role, content) VALUES (?, ?, ?)",
-                    (user_id, role, content),
+                    """
+                    INSERT INTO conversations (user_id, role, content)
+                    VALUES (?, ?, ?)
+                    """,
+                    (user_id, role, content)
                 )
                 conn.commit()
                 return True
         except Exception:
-            logger.exception("新增對話記錄失敗")
+            logger.exception("Failed to add conversation message")
             return False
 
     def get_conversation_history(self, user_id, limit=10):
-        """取得指定使用者的對話記錄"""
+        """Get conversation history for a specific user.
+
+        Args:
+            user_id (str): The user identifier.
+            limit (int, optional): Maximum number of messages to return. Defaults to 10.
+
+        Returns:
+            list: List of conversation messages, each containing role and content.
+        """
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with self._get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute(
-                    "SELECT role, content FROM conversations WHERE user_id = ? "
-                    "ORDER BY timestamp DESC LIMIT ?",
-                    (user_id, limit),
+                    """
+                    SELECT TOP (?) role, content
+                    FROM conversations
+                    WHERE user_id = ?
+                    ORDER BY timestamp DESC
+                    """,
+                    (limit, user_id)
                 )
                 messages = [
                     {"role": role, "content": content}
                     for role, content in cursor.fetchall()
                 ]
-                messages.reverse()  # 反轉順序讓最舊的訊息排在前面
+                messages.reverse()  # Reverse order to show oldest messages first
                 return messages
         except Exception:
-            logger.exception("取得對話記錄失敗")
+            logger.exception("Failed to retrieve conversation history")
             return []
 
     def set_user_preference(self, user_id, language=None):
-        """設定或更新使用者偏好"""
+        """Set or update user preferences.
+
+        Args:
+            user_id (str): The user identifier.
+            language (str, optional): Preferred language. Defaults to None.
+
+        Returns:
+            bool: True if successful, False otherwise.
+        """
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with self._get_connection() as conn:
                 cursor = conn.cursor()
-                # 先檢查使用者是否已存在
                 cursor.execute(
                     "SELECT user_id FROM user_preferences WHERE user_id = ?",
-                    (user_id,),
+                    (user_id,)
                 )
                 user_exists = cursor.fetchone()
+
                 if user_exists:
-                    updates = []
-                    params = []
                     if language:
-                        updates.append("language = ?")
-                        params.append(language)
-                    if updates:
-                        # 將 last_active 欄位更新為 CURRENT_TIMESTAMP
-                        updates.append("last_active = CURRENT_TIMESTAMP")
-                        query = (
-                            "UPDATE user_preferences SET " + ", ".join(updates) +
-                            " WHERE user_id = ?"
+                        cursor.execute(
+                            """
+                            UPDATE user_preferences
+                            SET language = ?, last_active = GETDATE()
+                            WHERE user_id = ?
+                            """,
+                            (language, user_id)
                         )
-                        params.append(user_id)
-                        cursor.execute(query, params)
                 else:
-                    fields = ["user_id"]
-                    values = [user_id]
-                    if language:
-                        fields.append("language")
-                        values.append(language)
-                    fields_str = ", ".join(fields)
-                    placeholders = ", ".join(["?"] * len(values))
-                    query = f"INSERT INTO user_preferences ({fields_str}) VALUES ({placeholders})"
-                    cursor.execute(query, tuple(values))
+                    cursor.execute(
+                        """
+                        INSERT INTO user_preferences (user_id, language)
+                        VALUES (?, ?)
+                        """,
+                        (user_id, language or 'zh-Hant')
+                    )
                 conn.commit()
                 return True
         except Exception:
-            logger.exception("設定使用者偏好失敗")
+            logger.exception("Failed to set user preferences")
             return False
 
     def get_user_preference(self, user_id):
-        """取得使用者偏好"""
+        """Get user preferences.
+
+        Args:
+            user_id (str): The user identifier.
+
+        Returns:
+            dict: User preferences including language setting.
+        """
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with self._get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute(
                     "SELECT language FROM user_preferences WHERE user_id = ?",
-                    (user_id,),
+                    (user_id,)
                 )
                 result = cursor.fetchone()
                 if result:
                     return {"language": result[0]}
-                else:
-                    # 如未找到則創建預設偏好
-                    self.set_user_preference(user_id)
-                    return {"language": "zh-Hant"}
+
+                # Create default preferences if not found
+                self.set_user_preference(user_id)
+                return {"language": "zh-Hant"}
         except Exception:
-            logger.exception("取得使用者偏好失敗")
+            logger.exception("Failed to retrieve user preferences")
             return {"language": "zh-Hant"}
 
     def get_conversation_stats(self):
-        """取得對話記錄統計資料"""
+        """Get conversation statistics.
+
+        Returns:
+            dict: Statistics including total messages, unique users, and message counts
+                 by role.
+        """
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with self._get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute("SELECT COUNT(*) FROM conversations")
                 total_messages = cursor.fetchone()[0]
+
                 cursor.execute("SELECT COUNT(DISTINCT user_id) FROM conversations")
                 unique_users = cursor.fetchone()[0]
+
                 cursor.execute(
-                    "SELECT COUNT(*) FROM conversations "
-                    "WHERE timestamp > datetime('now', '-1 day')"
+                    """
+                    SELECT COUNT(*) FROM conversations
+                    WHERE timestamp >= DATEADD(day, -1, GETDATE())
+                    """
                 )
                 last_24h = cursor.fetchone()[0]
+
                 cursor.execute(
-                    "SELECT role, COUNT(*) FROM conversations GROUP BY role"
+                    "SELECT role, COUNT(*) as count FROM conversations GROUP BY role"
                 )
                 role_counts = dict(cursor.fetchall())
+
                 return {
                     "total_messages": total_messages,
                     "unique_users": unique_users,
@@ -268,7 +333,7 @@ class Database:
                     "system_messages": role_counts.get("system", 0),
                 }
         except Exception:
-            logger.exception("取得對話統計資料失敗")
+            logger.exception("Failed to retrieve conversation statistics")
             return {
                 "total_messages": 0,
                 "unique_users": 0,
@@ -279,51 +344,60 @@ class Database:
             }
 
     def get_recent_conversations(self, limit=20):
-        """取得最近的對話列表"""
+        """Get list of recent conversations.
+
+        Args:
+            limit (int, optional): Maximum number of conversations to return.
+                                 Defaults to 20.
+
+        Returns:
+            list: List of recent conversations with user details and message counts.
+        """
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with self._get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute(
                     """
-                    SELECT DISTINCT c.user_id, p.language, MAX(c.timestamp) as last_message
+                    SELECT DISTINCT TOP (?)
+                        c.user_id,
+                        p.language,
+                        MAX(c.timestamp) as last_message
                     FROM conversations c
                     LEFT JOIN user_preferences p ON c.user_id = p.user_id
-                    GROUP BY c.user_id
+                    GROUP BY c.user_id, p.language
                     ORDER BY last_message DESC
-                    LIMIT ?
                     """,
-                    (limit,),
+                    (limit,)
                 )
                 results = []
                 for user_id, language, timestamp in cursor.fetchall():
                     cursor.execute(
                         "SELECT COUNT(*) FROM conversations WHERE user_id = ?",
-                        (user_id,),
+                        (user_id,)
                     )
                     message_count = cursor.fetchone()[0]
+
                     cursor.execute(
                         """
-                        SELECT content FROM conversations
+                        SELECT TOP 1 content FROM conversations
                         WHERE user_id = ? AND role = 'user'
-                        ORDER BY timestamp DESC LIMIT 1
+                        ORDER BY timestamp DESC
                         """,
-                        (user_id,),
+                        (user_id,)
                     )
                     last_message = cursor.fetchone()
-                    results.append(
-                        {
-                            "user_id": user_id,
-                            "language": language or "zh-Hant",
-                            "last_activity": timestamp,
-                            "message_count": message_count,
-                            "last_message": last_message[0] if last_message else "",
-                        }
-                    )
+                    results.append({
+                        "user_id": user_id,
+                        "language": language or "zh-Hant",
+                        "last_activity": timestamp,
+                        "message_count": message_count,
+                        "last_message": last_message[0] if last_message else "",
+                    })
                 return results
         except Exception:
-            logger.exception("取得最近對話失敗")
+            logger.exception("Failed to retrieve recent conversations")
             return []
 
 
-# 建立單例資料庫實例
+# Create singleton database instance
 db = Database()
