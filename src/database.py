@@ -1,5 +1,4 @@
 import logging
-import os
 import sqlite3
 
 # 設定日誌紀錄器
