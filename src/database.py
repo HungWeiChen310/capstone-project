@@ -1,15 +1,11 @@
-"""處理對話記錄與使用者偏好儲存的資料庫處理程序"""
-
 import logging
 import pyodbc
 
 # 設定日誌紀錄器
 logger = logging.getLogger(__name__)
 
-
 class Database:
     """處理對話記錄與使用者偏好儲存的資料庫處理程序"""
-
     def __init__(self, server="localhost", database="conversations"):
         """初始化資料庫連線"""
         self.connection_string = (
@@ -29,7 +25,6 @@ class Database:
         try:
             with self._get_connection() as conn:
                 cursor = conn.cursor()
-
                 # 建立對話記錄表
                 cursor.execute(
                     """
@@ -38,14 +33,14 @@ class Database:
                     )
                     CREATE TABLE conversations (
                         id INT IDENTITY(1,1) PRIMARY KEY,
-                        user_id NVARCHAR(255) NOT NULL,
-                        role NVARCHAR(50) NOT NULL,
+                        sender_id NVARCHAR(255) NOT NULL,
+                        receiver_id NVARCHAR(255),
+                        role NVARCHAR(255) NOT NULL,
                         content NVARCHAR(MAX) NOT NULL,
                         timestamp DATETIME2 DEFAULT GETDATE()
                     )
                     """
                 )
-
                 # 建立使用者偏好表
                 cursor.execute(
                     """
@@ -61,7 +56,6 @@ class Database:
                     )
                     """
                 )
-
                 # 建立設備表
                 cursor.execute(
                     """
@@ -72,57 +66,34 @@ class Database:
                         id INT IDENTITY(1,1) PRIMARY KEY,
                         equipment_id NVARCHAR(255) NOT NULL UNIQUE,
                         name NVARCHAR(255) NOT NULL,
-                        type NVARCHAR(100) NOT NULL,
+                        type NVARCHAR(255) NOT NULL,
                         location NVARCHAR(255),
-                        status NVARCHAR(50) DEFAULT N'normal',
+                        status NVARCHAR(255) DEFAULT N'normal',
                         last_updated DATETIME2 DEFAULT GETDATE()
                     )
                     """
                 )
-
-                # 建立設備監測指標表
+                # 建立異常紀錄表
                 cursor.execute(
                     """
                     IF NOT EXISTS (
-                        SELECT * FROM sys.tables WHERE name = 'equipment_metrics'
+                        SELECT * FROM sys.tables WHERE name = 'abnormal_logs'
                     )
-                    CREATE TABLE equipment_metrics (
+                    CREATE TABLE abnormal_logs (
                         id INT IDENTITY(1,1) PRIMARY KEY,
+                        event_date DATETIME2 NOT NULL,
                         equipment_id NVARCHAR(255) NOT NULL,
-                        metric_type NVARCHAR(100) NOT NULL,
-                        value FLOAT NOT NULL,
-                        threshold_min FLOAT,
-                        threshold_max FLOAT,
-                        unit NVARCHAR(50),
-                        timestamp DATETIME2 DEFAULT GETDATE(),
-                        FOREIGN KEY (equipment_id) REFERENCES equipment(equipment_id)
+                        deformation_mm FLOAT,
+                        rpm INT,
+                        event_time NVARCHAR(255),
+                        abnormal_type NVARCHAR(255),
+                        downtime INT,
+                        recovered_time NVARCHAR(255),
+                        notes NVARCHAR(255)
                     )
                     """
                 )
-
-                # 建立設備運轉紀錄表
-                cursor.execute(
-                    """
-                    IF NOT EXISTS (
-                        SELECT * FROM sys.tables WHERE name = 'equipment_operation_logs'
-                    )
-                    CREATE TABLE equipment_operation_logs (
-                        id INT IDENTITY(1,1) PRIMARY KEY,
-                        equipment_id NVARCHAR(255) NOT NULL,
-                        operation_type NVARCHAR(100) NOT NULL,
-                        start_time DATETIME2,
-                        end_time DATETIME2,
-                        lot_id NVARCHAR(255),
-                        product_id NVARCHAR(255),
-                        yield_rate FLOAT,
-                        operator_id NVARCHAR(255),
-                        notes NVARCHAR(MAX),
-                        FOREIGN KEY (equipment_id) REFERENCES equipment(equipment_id)
-                    )
-                    """
-                )
-
-                # 建立警報記錄表
+                #  建立警報記錄表
                 cursor.execute(
                     """
                     IF NOT EXISTS (
@@ -131,8 +102,8 @@ class Database:
                     CREATE TABLE alert_history (
                         id INT IDENTITY(1,1) PRIMARY KEY,
                         equipment_id NVARCHAR(255) NOT NULL,
-                        alert_type NVARCHAR(100) NOT NULL,
-                        severity NVARCHAR(50) NOT NULL,
+                        alert_type NVARCHAR(255) NOT NULL,
+                        severity NVARCHAR(255) NOT NULL,
                         message NVARCHAR(MAX) NOT NULL,
                         is_resolved BIT DEFAULT 0,
                         created_at DATETIME2 DEFAULT GETDATE(),
@@ -143,7 +114,6 @@ class Database:
                     )
                     """
                 )
-
                 # 建立使用者訂閱設備表
                 cursor.execute(
                     """
@@ -154,30 +124,146 @@ class Database:
                         id INT IDENTITY(1,1) PRIMARY KEY,
                         user_id NVARCHAR(255) NOT NULL,
                         equipment_id NVARCHAR(255) NOT NULL,
-                        notification_level NVARCHAR(50) DEFAULT N'all',
+                        notification_level NVARCHAR(255) DEFAULT N'all',
                         subscribed_at DATETIME2 DEFAULT GETDATE(),
                         CONSTRAINT UQ_user_equipment UNIQUE(user_id, equipment_id)
                     )
                     """
                 )
+                 # 建立設備運作統計（月）
+                cursor.execute(
+                    """
+                    IF NOT EXISTS (
+                        SELECT * FROM sys.tables WHERE name = 'operation_stats_monthly'
+                    )
+                    CREATE TABLE operation_stats_monthly (
+                        id INT IDENTITY(1,1) PRIMARY KEY,
+                        equipment_id NVARCHAR(255) NOT NULL,
+                        year INT,
+                        month INT,
+                        total_operation_time INT, -- 總運作時長（分鐘）
+                        total_downtime INT,       -- 停機總時長（分鐘）
+                        downtime_rate FLOAT,      -- 停機率
+                        description NVARCHAR(255) -- 補充說明
+                    )
+                    """
+                )
+    
 
+                # 建立設備運作統計（季）
+                cursor.execute(
+                    """
+                    IF NOT EXISTS (
+                        SELECT * FROM sys.tables WHERE name = 'operation_stats_quarterly'
+                    )
+                    CREATE TABLE operation_stats_quarterly (
+                        id INT IDENTITY(1,1) PRIMARY KEY,
+                        equipment_id NVARCHAR(255) NOT NULL,
+                        year INT,
+                        quarter INT,
+                        total_operation_time INT,
+                        total_downtime INT,
+                        downtime_rate FLOAT,
+                        description NVARCHAR(255)
+                    )
+                    """
+                )
+    
+
+                # 建立設備運作統計（年）
+                cursor.execute(
+                    """
+                    IF NOT EXISTS (
+                        SELECT * FROM sys.tables WHERE name = 'operation_stats_yearly'
+                    )
+                    CREATE TABLE operation_stats_yearly (
+                        id INT IDENTITY(1,1) PRIMARY KEY,
+                        equipment_id NVARCHAR(255) NOT NULL,
+                        year INT,
+                        total_operation_time INT,
+                        total_downtime INT,
+                        downtime_rate FLOAT,
+                        description NVARCHAR(255)
+                    )
+                    """
+                )
+    
+
+                # 建立各異常統計（月）
+                cursor.execute(
+                    """
+                    IF NOT EXISTS (
+                        SELECT * FROM sys.tables WHERE name = 'fault_stats_monthly'
+                    )
+                    CREATE TABLE fault_stats_monthly (
+                        id INT IDENTITY(1,1) PRIMARY KEY,
+                        equipment_id NVARCHAR(255) NOT NULL,
+                        year INT,
+                        month INT,
+                        abnormal_type NVARCHAR(255), -- 異常類型
+                        downtime INT,               -- 停機時長（分鐘）
+                        downtime_rate FLOAT,        -- 停機率
+                        description NVARCHAR(255)   -- 補充說明
+                    )
+                    """
+                )
+    
+
+                # 建立各異常統計（季）
+                cursor.execute(
+                    """
+                    IF NOT EXISTS (
+                        SELECT * FROM sys.tables WHERE name = 'fault_stats_quarterly'
+                    )
+                    CREATE TABLE fault_stats_quarterly (
+                        id INT IDENTITY(1,1) PRIMARY KEY,
+                        equipment_id NVARCHAR(255) NOT NULL,
+                        year INT,
+                        quarter INT,
+                        abnormal_type NVARCHAR(255),
+                        downtime INT,
+                        downtime_rate FLOAT,
+                        description NVARCHAR(255)
+                    )
+                    """
+                )
+    
+
+                # 建立各異常統計（年）
+                cursor.execute(
+                    """
+                    IF NOT EXISTS (
+                        SELECT * FROM sys.tables WHERE name = 'fault_stats_yearly'
+                    )
+                    CREATE TABLE fault_stats_yearly (
+                        id INT IDENTITY(1,1) PRIMARY KEY,
+                        equipment_id NVARCHAR(255) NOT NULL,
+                        year INT,
+                        abnormal_type NVARCHAR(255),
+                        downtime INT,
+                        downtime_rate FLOAT,
+                        description NVARCHAR(255)
+                    )
+                    """
+                )
                 conn.commit()
-                logger.info("資料庫初始化成功，包含設備監控相關資料表")
+                logger.info("資料庫初始化成功，包含所有自訂資料表")
         except Exception as e:
             logger.exception(f"資料庫初始化失敗：{e}")
             raise
 
-    def add_message(self, user_id, role, content):
-        """加入一筆新的對話記錄"""
+    # conversations 相關 method (sender_id/receiver_id 版本)
+    def add_message(self, sender_id, receiver_id, role, content):
+        """加入一筆新的對話記錄（sender/receiver 架構）"""
         try:
             with self._get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute(
                     """
-                    INSERT INTO conversations (user_id, role, content)
-                    VALUES (?, ?, ?)
+                    INSERT INTO conversations (sender_id, receiver_id, role, content)
+                    VALUES (?, ?, ?, ?)
                     """,
-                    (user_id, role, content)
+                    (sender_id, receiver_id, role, content)
                 )
                 conn.commit()
                 return True
@@ -185,8 +271,8 @@ class Database:
             logger.exception("新增對話記錄失敗")
             return False
 
-    def get_conversation_history(self, user_id, limit=10):
-        """取得指定使用者的對話記錄"""
+    def get_conversation_history(self, sender_id, limit=10):
+        """取得指定 sender 的對話記錄"""
         try:
             with self._get_connection() as conn:
                 cursor = conn.cursor()
@@ -194,21 +280,109 @@ class Database:
                     """
                     SELECT TOP (?) role, content
                     FROM conversations
-                    WHERE user_id = ?
+                    WHERE sender_id = ?
                     ORDER BY timestamp DESC
                     """,
-                    (limit, user_id)
+                    (limit, sender_id)
                 )
                 messages = [
                     {"role": role, "content": content}
                     for role, content in cursor.fetchall()
                 ]
-                messages.reverse()  # 反轉順序讓最舊的訊息排在前面
+                messages.reverse()
                 return messages
         except Exception:
             logger.exception("取得對話記錄失敗")
             return []
 
+    def get_conversation_stats(self):
+        """取得對話記錄統計資料"""
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT COUNT(*) FROM conversations")
+                total_messages = cursor.fetchone()[0]
+                cursor.execute(
+                    "SELECT COUNT(DISTINCT sender_id) FROM conversations"
+                )
+                unique_users = cursor.fetchone()[0]
+                cursor.execute(
+                    """
+                    SELECT COUNT(*) FROM conversations
+                    WHERE timestamp >= DATEADD(day, -1, GETDATE())
+                    """
+                )
+                last_24h = cursor.fetchone()[0]
+                cursor.execute(
+                    "SELECT role, COUNT(*) FROM conversations GROUP BY role"
+                )
+                role_counts = dict(cursor.fetchall())
+                return {
+                    "total_messages": total_messages,
+                    "unique_users": unique_users,
+                    "last_24h": last_24h,
+                    "user_messages": role_counts.get("user", 0),
+                    "assistant_messages": role_counts.get("assistant", 0),
+                    "system_messages": role_counts.get("system", 0),
+                }
+        except Exception:
+            logger.exception("取得對話統計資料失敗")
+            return {
+                "total_messages": 0,
+                "unique_users": 0,
+                "last_24h": 0,
+                "user_messages": 0,
+                "assistant_messages": 0,
+                "system_messages": 0,
+            }
+
+    def get_recent_conversations(self, limit=20):
+        """取得最近的對話列表（依 sender_id）"""
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    SELECT DISTINCT TOP (?)
+                        c.sender_id,
+                        p.language,
+                        MAX(c.timestamp) as last_message
+                    FROM conversations c
+                    LEFT JOIN user_preferences p ON c.sender_id = p.user_id
+                    GROUP BY c.sender_id, p.language
+                    ORDER BY last_message DESC
+                    """,
+                    (limit,)
+                )
+                results = []
+                for sender_id, language, timestamp in cursor.fetchall():
+                    cursor.execute(
+                        "SELECT COUNT(*) FROM conversations WHERE sender_id = ?",
+                        (sender_id,)
+                    )
+                    message_count = cursor.fetchone()[0]
+                    cursor.execute(
+                        """
+                        SELECT TOP 1 content FROM conversations
+                        WHERE sender_id = ? AND role = 'user'
+                        ORDER BY timestamp DESC
+                        """,
+                        (sender_id,)
+                    )
+                    last_message = cursor.fetchone()
+                    results.append({
+                        "sender_id": sender_id,
+                        "language": language or "zh-Hant",
+                        "last_activity": timestamp,
+                        "message_count": message_count,
+                        "last_message": last_message[0] if last_message else "",
+                    })
+                return results
+        except Exception:
+            logger.exception("取得最近對話失敗")
+            return []
+
+    # user_preferences method（保持原樣）
     def set_user_preference(self, user_id, language=None):
         """設定或更新使用者偏好"""
         try:
@@ -219,7 +393,6 @@ class Database:
                     (user_id,)
                 )
                 user_exists = cursor.fetchone()
-
                 if user_exists:
                     if language:
                         cursor.execute(
@@ -256,106 +429,12 @@ class Database:
                 result = cursor.fetchone()
                 if result:
                     return {"language": result[0]}
-
                 # 如未找到則創建預設偏好
                 self.set_user_preference(user_id)
                 return {"language": "zh-Hant"}
         except Exception:
             logger.exception("取得使用者偏好失敗")
             return {"language": "zh-Hant"}
-
-    def get_conversation_stats(self):
-        """取得對話記錄統計資料"""
-        try:
-            with self._get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute("SELECT COUNT(*) FROM conversations")
-                total_messages = cursor.fetchone()[0]
-
-                cursor.execute(
-                    "SELECT COUNT(DISTINCT user_id) FROM conversations"
-                )
-                unique_users = cursor.fetchone()[0]
-
-                cursor.execute(
-                    """
-                    SELECT COUNT(*) FROM conversations
-                    WHERE timestamp >= DATEADD(day, -1, GETDATE())
-                    """
-                )
-                last_24h = cursor.fetchone()[0]
-
-                cursor.execute(
-                    "SELECT role, COUNT(*) FROM conversations GROUP BY role"
-                )
-                role_counts = dict(cursor.fetchall())
-
-                return {
-                    "total_messages": total_messages,
-                    "unique_users": unique_users,
-                    "last_24h": last_24h,
-                    "user_messages": role_counts.get("user", 0),
-                    "assistant_messages": role_counts.get("assistant", 0),
-                    "system_messages": role_counts.get("system", 0),
-                }
-        except Exception:
-            logger.exception("取得對話統計資料失敗")
-            return {
-                "total_messages": 0,
-                "unique_users": 0,
-                "last_24h": 0,
-                "user_messages": 0,
-                "assistant_messages": 0,
-                "system_messages": 0,
-            }
-
-    def get_recent_conversations(self, limit=20):
-        """取得最近的對話列表"""
-        try:
-            with self._get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute(
-                    """
-                    SELECT DISTINCT TOP (?)
-                        c.user_id,
-                        p.language,
-                        MAX(c.timestamp) as last_message
-                    FROM conversations c
-                    LEFT JOIN user_preferences p ON c.user_id = p.user_id
-                    GROUP BY c.user_id, p.language
-                    ORDER BY last_message DESC
-                    """,
-                    (limit,)
-                )
-                results = []
-                for user_id, language, timestamp in cursor.fetchall():
-                    cursor.execute(
-                        "SELECT COUNT(*) FROM conversations WHERE user_id = ?",
-                        (user_id,)
-                    )
-                    message_count = cursor.fetchone()[0]
-
-                    cursor.execute(
-                        """
-                        SELECT TOP 1 content FROM conversations
-                        WHERE user_id = ? AND role = 'user'
-                        ORDER BY timestamp DESC
-                        """,
-                        (user_id,)
-                    )
-                    last_message = cursor.fetchone()
-                    results.append({
-                        "user_id": user_id,
-                        "language": language or "zh-Hant",
-                        "last_activity": timestamp,
-                        "message_count": message_count,
-                        "last_message": last_message[0] if last_message else "",
-                    })
-                return results
-        except Exception:
-            logger.exception("取得最近對話失敗")
-            return []
-
 
 # 建立單例資料庫實例
 db = Database()
