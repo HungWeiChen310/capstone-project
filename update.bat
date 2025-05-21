@@ -6,7 +6,6 @@ echo 自動更新 Git 主源代碼
 echo 目前資料夾：%cd%
 echo -----------------------------------
 
-REM 確保 git 有安裝成功
 where git >nul 2>nul
 if errorlevel 1 (
     echo [錯誤] 未偵測到 git，請先安裝 Git 並設定環境變數。
