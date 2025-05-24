@@ -26,6 +26,11 @@ class Config:
     # LINE Bot 配置
     LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
     LINE_CHANNEL_SECRET = os.getenv("LINE_CHANNEL_SECRET")
+    # Database 配置
+    DB_SERVER = os.getenv("DB_SERVER", "localhost")  # Default
+    DB_NAME = os.getenv("DB_NAME", "conversations")  # Default
+    DB_USER = os.getenv("DB_USER")  # For potential future use with non-trusted connections
+    DB_PASSWORD = os.getenv("DB_PASSWORD")  # For potential future use
     # 驗證模式：嚴格 (strict) 或寬鬆 (loose)
     VALIDATION_MODE = os.getenv("VALIDATION_MODE", "strict")
 
@@ -48,6 +53,11 @@ class Config:
             missing_vars.append("LINE_CHANNEL_ACCESS_TOKEN")
         if not cls.LINE_CHANNEL_SECRET:
             missing_vars.append("LINE_CHANNEL_SECRET")
+        # 檢查 Database 設定
+        if not cls.DB_SERVER:
+            missing_vars.append("DB_SERVER")
+        if not cls.DB_NAME:
+            missing_vars.append("DB_NAME")
         if missing_vars:
             error_msg = f"缺少以下必要環境變數: {', '.join(missing_vars)}"
             logger.error(error_msg)

@@ -1,7 +1,6 @@
 import logging
-import sqlite3
 from datetime import datetime, timedelta
-
+import pyodbc  # Added to resolve F821 and for type hinting if used
 from database import db
 
 logger = logging.getLogger(__name__)
@@ -38,19 +37,21 @@ class EquipmentMonitor:
     def check_all_equipment(self):
         """檢查所有設備是否有異常"""
         try:
-            with sqlite3.connect(self.db.db_path) as conn:
+            with self.db._get_connection() as conn:
                 cursor = conn.cursor()
                 # 取得所有活動中的設備
                 cursor.execute(
-                    "SELECT equipment_id, name, type FROM equipment WHERE status != 'offline'"
+                    "SELECT equipment_id, name, type FROM equipment WHERE status <> 'offline'"
                 )
                 equipments = cursor.fetchall()
                 for equipment_id, name, equipment_type in equipments:
                     self._check_equipment_metrics(conn, equipment_id, name, equipment_type)
                     self._check_operation_status(conn, equipment_id, name, equipment_type)
             logger.info("所有設備檢查完成。")
+        except pyodbc.Error as db_err:
+            logger.exception(f"檢查所有設備時發生資料庫錯誤: {db_err}")
         except Exception as e:
-            logger.exception("檢查所有設備時發生錯誤: %s", e)
+            logger.exception(f"檢查所有設備時發生非預期錯誤: {e}")
 
     def _check_equipment_metrics(self, conn, equipment_id, name, equipment_type):
         """檢查設備的指標是否異常"""
@@ -61,7 +62,7 @@ class EquipmentMonitor:
             SELECT metric_type, value, threshold_min, threshold_max, unit
             FROM equipment_metrics
             WHERE equipment_id = ?
-              AND timestamp > datetime('now', '-30 minute')
+              AND timestamp > DATEADD(minute, -30, GETDATE())
             ORDER BY timestamp DESC
             """,
             (equipment_id,),
@@ -138,7 +139,7 @@ class EquipmentMonitor:
             cursor.execute(
                 """
                 UPDATE equipment
-                SET status = ?, last_updated = CURRENT_TIMESTAMP
+                SET status = ?, last_updated = GETDATE()
                 WHERE equipment_id = ?
                 """,
                 (new_status, equipment_id),
@@ -262,15 +263,18 @@ class EquipmentMonitor:
             service = OpenAIService(message=prompt, user_id="system")
             response = service.get_response()
             return response
-        except Exception as e:
-            logger.exception("產生 AI 建議時發生錯誤: %s", e)
+        except ImportError as imp_err:
+            logger.error(f"無法導入 OpenAIService: {imp_err}")
+            return None
+        except Exception as e:  # Keep a general Exception for OpenAI client errors for now
+            logger.exception(f"產生 AI 建議時發生錯誤: {e}")
             return None
 
     def _send_alert_notification(self, equipment_id, message, severity):
         """發送通知給負責該設備的使用者"""
         try:
             from src.linebot_connect import send_notification
-            with sqlite3.connect(self.db.db_path) as conn:
+            with self.db._get_connection() as conn:
                 cursor = conn.cursor()
                 if severity == self.SEVERITY_WARNING:
                     cursor.execute(
@@ -319,5 +323,9 @@ class EquipmentMonitor:
                 for user_id in unique_users:
                     send_notification(user_id, message)
                     logger.info("通知已發送給使用者: %s", user_id)
+        except pyodbc.Error as db_err:
+            logger.exception(f"發送設備 {equipment_id} 的通知時發生資料庫錯誤: {db_err}")
+        except ImportError as imp_err:
+            logger.error(f"無法導入 send_notification: {imp_err}")
         except Exception as e:
-            logger.exception("發送設備 %s 的通知時出錯: %s", equipment_id, e)
+            logger.exception(f"發送設備 {equipment_id} 的通知時發生非預期錯誤: {e}")
