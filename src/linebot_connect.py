@@ -153,6 +153,15 @@ def create_app():
         template_folder=os.path.join(os.path.dirname(os.path.dirname(__file__)), "templates"),
     )
     app.secret_key = get_or_create_secret_key()
+    
+    //臨時寫的log寫入，可能需要更多測試,晚點看看有沒有重複的功能
+    output_log_file = logging.FileHandler("app.log")
+    output_log_file.setLevel(logging.INFO)            # 設定輸出等級
+    output_log_file.setFormatter(log_formatter)
+
+    # 加到 app logger 上
+    app.logger.addHandler(file_handler)
+    app.logger.setLevel(logging.INFO)
 
     # 處理代理標頭
     app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1)
