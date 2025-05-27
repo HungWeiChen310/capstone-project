@@ -2,66 +2,76 @@ import datetime
 import json
 import logging
 import os
-import sqlite3
-
+import pyodbc  # 引入 pyodbc
+from database import db  # 從 database 模組匯入 db 實例
 
 logger = logging.getLogger(__name__)
 
 
 class Analytics:
-    """分析模組，用於追蹤與分析使用者行為與系統使用狀況"""
+    """分析模組，用於追蹤與分析使用者行為與系統使用狀況 (使用 MS SQL Server)"""
 
-    def __init__(self, db_path="data/conversations.db"):
-        """初始化分析模組"""
-        self.db_path = db_path
-        stats_dir = os.path.join(os.path.dirname(db_path), "stats")
+    def __init__(self):
+        """初始化分析模組，並確保分析相關的資料表已建立"""
+        # stats_dir 和 self.stats_path 仍然用於匯出 JSON 統計檔案，可以保留
+        # 可以基於 db 的某個屬性或固定路徑
+        stats_dir = os.path.join(os.path.dirname(db.connection_string), "stats")
+        if "SERVER" not in db.connection_string:  # 簡易判斷是否為有效連線字串
+            # 如果 db 連線字串不尋常，給一個預設
+            stats_dir = os.path.join(os.getcwd(), "data", "stats")
+
         os.makedirs(stats_dir, exist_ok=True)
         self.stats_path = os.path.join(stats_dir, "usage_stats.json")
         self._initialize_analytics_tables()
 
     def _initialize_analytics_tables(self):
-        """初始化分析用的資料表"""
+        """初始化分析用的資料表 (MS SQL Server 版本)"""
         try:
-            with self._get_db_connection() as conn:
+            with db._get_connection() as conn:  # 使用全域 db 實例的連線
                 cursor = conn.cursor()
+                # analytics_events 表
                 cursor.execute(
                     """
-                    CREATE TABLE IF NOT EXISTS analytics_events (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        event_type TEXT NOT NULL,
-                        user_id TEXT,
-                        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-                        metadata TEXT
-                    )
+                    IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'analytics_events')
+                    CREATE TABLE analytics_events (
+                        id INT IDENTITY(1,1) PRIMARY KEY,
+                        event_type NVARCHAR(255) NOT NULL,
+                        user_id NVARCHAR(255),
+                        timestamp DATETIME2 DEFAULT GETDATE(),
+                        metadata NVARCHAR(MAX) NULL  -- 允許 NULL
+                    );
                     """
                 )
+                # daily_stats 表
                 cursor.execute(
                     """
-                    CREATE TABLE IF NOT EXISTS daily_stats (
-                        date TEXT PRIMARY KEY,
-                        total_messages INTEGER DEFAULT 0,
-                        unique_users INTEGER DEFAULT 0,
-                        avg_response_time REAL DEFAULT 0,
-                        data JSON
-                    )
+                    IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'daily_stats')
+                    CREATE TABLE daily_stats (
+                        date DATE PRIMARY KEY,  -- 使用 DATE 型別
+                        total_messages INT DEFAULT 0,
+                        unique_users INT DEFAULT 0,
+                        avg_response_time FLOAT DEFAULT 0,  -- 使用 FLOAT
+                        data NVARCHAR(MAX) NULL  -- 儲存 JSON 字串
+                    );
                     """
                 )
+                # keyword_stats 表
                 cursor.execute(
                     """
-                    CREATE TABLE IF NOT EXISTS keyword_stats (
-                        keyword TEXT PRIMARY KEY,
-                        count INTEGER DEFAULT 0,
-                        last_used DATETIME DEFAULT CURRENT_TIMESTAMP
-                    )
+                    IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'keyword_stats')
+                    CREATE TABLE keyword_stats (
+                        keyword NVARCHAR(255) PRIMARY KEY,
+                        count INT DEFAULT 0,
+                        last_used DATETIME2 DEFAULT GETDATE()
+                    );
                     """
                 )
                 conn.commit()
+                logger.info("分析相關資料表已在 MS SQL Server 中初始化或確認存在。")
+        except pyodbc.Error as e:
+            logger.exception(f"初始化 MS SQL Server 分析表失敗: {e}")
         except Exception as e:
-            logger.exception("初始化分析表失敗: %s", e)
-
-    def _get_db_connection(self):
-        """取得資料庫連線"""
-        return sqlite3.connect(self.db_path)
+            logger.exception(f"初始化 MS SQL Server 分析表時發生未知錯誤: {e}")
 
     def track_event(self, event_type, user_id=None, metadata=None):
         """
@@ -74,17 +84,20 @@ class Analytics:
         """
         try:
             metadata_json = json.dumps(metadata) if metadata else None
-            with self._get_db_connection() as conn:
+            with db._get_connection() as conn:  # 使用全域 db 實例的連線
                 cursor = conn.cursor()
                 cursor.execute(
                     "INSERT INTO analytics_events (event_type, user_id, metadata) "
-                    "VALUES (?, ?, ?)",
+                    "VALUES (?, ?, ?);",
                     (event_type, user_id, metadata_json),
                 )
                 conn.commit()
             return True
+        except pyodbc.Error as e:
+            logger.exception(f"記錄事件 [%s] 到 MS SQL Server 失敗: {e}", event_type)
+            return False
         except Exception as e:
-            logger.exception("記錄事件 [%s] 失敗: %s", event_type, e)
+            logger.exception(f"記錄事件 [%s] 時發生未知錯誤: {e}", event_type)
             return False
 
     def track_keywords(self, text, increment=1):
@@ -99,103 +112,138 @@ class Analytics:
             return False
         keywords = [word for word in text.lower().split() if len(word) > 1]
         try:
-            with self._get_db_connection() as conn:
+            with db._get_connection() as conn:  # 使用全域 db 實例的連線
                 cursor = conn.cursor()
                 for keyword in keywords:
+                    # 檢查關鍵字是否存在
                     cursor.execute(
-                        "SELECT count FROM keyword_stats WHERE keyword = ?",
-                        (keyword,),
+                        "SELECT count FROM keyword_stats WHERE keyword = ?;", (keyword,)
                     )
                     result = cursor.fetchone()
                     if result:
                         cursor.execute(
-                            "UPDATE keyword_stats SET count = count + ?, last_used = "
-                            "CURRENT_TIMESTAMP WHERE keyword = ?",
+                            "UPDATE keyword_stats SET count = count + ?, "
+                            "last_used = GETDATE() WHERE keyword = ?;",
                             (increment, keyword),
                         )
                     else:
                         cursor.execute(
-                            "INSERT INTO keyword_stats (keyword, count) VALUES (?, ?)",
+                            "INSERT INTO keyword_stats (keyword, count, last_used) "
+                            "VALUES (?, ?, GETDATE());",
                             (keyword, increment),
                         )
                 conn.commit()
             return True
+        except pyodbc.Error as e:
+            logger.exception(f"追蹤關鍵字到 MS SQL Server 失敗: {e}")
+            return False
         except Exception as e:
-            logger.exception("追蹤關鍵字失敗: %s", e)
+            logger.exception(f"追蹤關鍵字時發生未知錯誤: {e}")
             return False
 
     def get_top_keywords(self, limit=20):
         """取得最常使用的關鍵字"""
         try:
-            with self._get_db_connection() as conn:
+            with db._get_connection() as conn:  # 使用全域 db 實例的連線
                 cursor = conn.cursor()
+                # MS SQL Server 使用 TOP
                 cursor.execute(
-                    "SELECT keyword, count FROM keyword_stats ORDER BY count DESC LIMIT ?",
+                    "SELECT TOP (?) keyword, count FROM keyword_stats "
+                    "ORDER BY count DESC;",
                     (limit,),
                 )
                 return [(keyword, count) for keyword, count in cursor.fetchall()]
+        except pyodbc.Error as e:
+            logger.exception(f"從 MS SQL Server 取得熱門關鍵字失敗: {e}")
+            return []
         except Exception as e:
-            logger.exception("取得熱門關鍵字失敗: %s", e)
+            logger.exception(f"取得熱門關鍵字時發生未知錯誤: {e}")
             return []
 
-    def generate_daily_stats(self, date=None):
+    def generate_daily_stats(self, date_str=None):  # 參數名改為 date_str 以清晰
         """
         生成每日統計數據
 
         參數:
-            date: 日期字串 (YYYY-MM-DD)，若未提供則使用今天
+            date_str: 日期字串 (YYYY-MM-DD)，若未提供則使用今天
         """
-        if date is None:
-            date = datetime.datetime.now().strftime("%Y-%m-%d")
+        if date_str is None:
+            date_str = datetime.datetime.now().strftime("%Y-%m-%d")
+
+        # 確保 date_str 是 YYYY-MM-DD 格式
         try:
-            with self._get_db_connection() as conn:
+            datetime.datetime.strptime(date_str, "%Y-%m-%d")
+        except ValueError:
+            logger.error(f"無效的日期格式: {date_str}. 請使用 YYYY-MM-DD.")
+            return None
+
+        try:
+            with db._get_connection() as conn:  # 使用全域 db 實例的連線
                 cursor = conn.cursor()
+
+                # 總訊息數
                 cursor.execute(
-                    "SELECT COUNT(*) FROM conversations WHERE date(timestamp) = ?",
-                    (date,),
+                    "SELECT COUNT(*) FROM conversations "
+                    "WHERE CONVERT(date, timestamp) = ?;",
+                    (date_str,),
                 )
                 total_messages = cursor.fetchone()[0]
+
+                # 唯一使用者數 (基於 conversations 表的 sender_id)
                 cursor.execute(
-                    "SELECT COUNT(DISTINCT user_id) FROM conversations "
-                    "WHERE date(timestamp) = ?",
-                    (date,),
+                    "SELECT COUNT(DISTINCT sender_id) FROM conversations "
+                    "WHERE CONVERT(date, timestamp) = ?;",
+                    (date_str,),
                 )
                 unique_users = cursor.fetchone()[0]
+
+                # 事件計數
                 cursor.execute(
                     "SELECT event_type, COUNT(*) FROM analytics_events "
-                    "WHERE date(timestamp) = ? GROUP BY event_type",
-                    (date,),
+                    "WHERE CONVERT(date, timestamp) = ? GROUP BY event_type;",
+                    (date_str,),
                 )
                 event_counts = dict(cursor.fetchall())
+
+                # 語言分佈 (從 user_preferences 獲取)
                 cursor.execute(
-                    "SELECT language, COUNT(*) FROM user_preferences GROUP BY language"
+                    "SELECT language, COUNT(*) FROM user_preferences GROUP BY language;"
                 )
                 language_distribution = dict(cursor.fetchall())
+
                 stats_data = {
-                    "date": date,
+                    "date": date_str,
                     "total_messages": total_messages,
                     "unique_users": unique_users,
                     "events": event_counts,
                     "language_distribution": language_distribution,
                 }
                 stats_json = json.dumps(stats_data)
-                cursor.execute("SELECT date FROM daily_stats WHERE date = ?", (date,))
+
+                cursor.execute(
+                    "SELECT date FROM daily_stats WHERE date = ?;", (date_str,)
+                )
                 if cursor.fetchone():
                     cursor.execute(
                         "UPDATE daily_stats SET total_messages = ?, unique_users = ?, "
-                        "data = ? WHERE date = ?",
-                        (total_messages, unique_users, stats_json, date),
+                        "data = ? WHERE date = ?;",
+                        (total_messages, unique_users, stats_json, date_str),
                     )
                 else:
                     cursor.execute(
-                        "INSERT INTO daily_stats (date, total_messages, unique_users, data) "
-                        "VALUES (?, ?, ?, ?)",
-                        (date, total_messages, unique_users, stats_json),
+                        "INSERT INTO daily_stats (date, total_messages, "
+                        "unique_users, data) VALUES (?, ?, ?, ?);",
+                        (date_str, total_messages, unique_users, stats_json),
                     )
                 conn.commit()
                 return stats_data
+        except pyodbc.Error as e:
+            logger.exception(
+                f"生成 MS SQL Server 每日統計 ({date_str}) 失敗: {e}"
+            )
+            return None
         except Exception as e:
-            logger.exception("生成每日統計失敗: %s", e)
+            logger.exception(f"生成每日統計 ({date_str}) 時發生未知錯誤: {e}")
             return None
 
     def get_usage_trends(self, days=30):
@@ -206,51 +254,98 @@ class Analytics:
             days: 要回溯的天數
         """
         end_date = datetime.datetime.now()
-        start_date = end_date - datetime.timedelta(days=days)
+        # 包含今天，所以是 days-1
+        start_date = end_date - datetime.timedelta(days=days - 1)
+
+        date_range_str = []
+        current_dt = start_date
+        while current_dt <= end_date:
+            date_range_str.append(current_dt.strftime("%Y-%m-%d"))
+            current_dt += datetime.timedelta(days=1)
+
+        message_trend_map = {day_str: 0 for day_str in date_range_str}
+        user_trend_map = {day_str: 0 for day_str in date_range_str}
+
         try:
-            with self._get_db_connection() as conn:
+            with db._get_connection() as conn:  # 使用全域 db 實例的連線
                 cursor = conn.cursor()
+                # 訊息趨勢
+                sql_message_trend = """
+                    SELECT CONVERT(date, timestamp) as day, COUNT(*) as count
+                    FROM conversations
+                    WHERE timestamp BETWEEN ? AND ?
+                    GROUP BY CONVERT(date, timestamp)
+                    ORDER BY day;
+                """
                 cursor.execute(
-                    "SELECT date(timestamp) as day, COUNT(*) as count FROM conversations "
-                    "WHERE timestamp BETWEEN ? AND ? GROUP BY day ORDER BY day",
+                    sql_message_trend,
                     (
-                        start_date.strftime("%Y-%m-%d"),
-                        end_date.strftime("%Y-%m-%d"),
-                    ),
+                        start_date.strftime("%Y-%m-%d %H:%M:%S"),
+                        end_date.strftime("%Y-%m-%d %H:%M:%S")
+                    )
                 )
-                message_trend = {day: count for day, count in cursor.fetchall()}
+                for row in cursor.fetchall():
+                    day_str = (
+                        row[0].strftime("%Y-%m-%d")
+                        if isinstance(row[0], (datetime.date, datetime.datetime))
+                        else str(row[0])
+                    )
+                    if day_str in message_trend_map:
+                        message_trend_map[day_str] = row[1]
+
+                # 使用者趨勢
+                sql_user_trend = """
+                    SELECT CONVERT(date, timestamp) as day, COUNT(DISTINCT sender_id) as count
+                    FROM conversations
+                    WHERE timestamp BETWEEN ? AND ?
+                    GROUP BY CONVERT(date, timestamp)
+                    ORDER BY day;
+                """
                 cursor.execute(
-                    "SELECT date(timestamp) as day, COUNT(DISTINCT user_id) as count FROM "
-                    "conversations WHERE timestamp BETWEEN ? AND ? GROUP BY day ORDER BY day",
+                    sql_user_trend,
                     (
-                        start_date.strftime("%Y-%m-%d"),
-                        end_date.strftime("%Y-%m-%d"),
-                    ),
+                        start_date.strftime("%Y-%m-%d %H:%M:%S"),
+                        end_date.strftime("%Y-%m-%d %H:%M:%S")
+                    )
                 )
-                user_trend = {day: count for day, count in cursor.fetchall()}
-                date_range = []
-                current = start_date
-                while current <= end_date:
-                    date_range.append(current.strftime("%Y-%m-%d"))
-                    current += datetime.timedelta(days=1)
+                for row in cursor.fetchall():
+                    day_str = (
+                        row[0].strftime("%Y-%m-%d")
+                        if isinstance(row[0], (datetime.date, datetime.datetime))
+                        else str(row[0])
+                    )
+                    if day_str in user_trend_map:
+                        user_trend_map[day_str] = row[1]
+
                 trends = {
-                    "dates": date_range,
-                    "messages": [message_trend.get(date, 0) for date in date_range],
-                    "users": [user_trend.get(date, 0) for date in date_range],
+                    "dates": date_range_str,
+                    "messages": [message_trend_map[day_str] for day_str in date_range_str],
+                    "users": [user_trend_map[day_str] for day_str in date_range_str],
                 }
                 return trends
+        except pyodbc.Error as e:
+            logger.exception(f"從 MS SQL Server 取得使用趨勢失敗: {e}")
+            return {
+                "dates": date_range_str,
+                "messages": [0]*len(date_range_str),
+                "users": [0]*len(date_range_str)
+            }
         except Exception as e:
-            logger.exception("取得使用趨勢失敗: %s", e)
-            return None
+            logger.exception(f"取得使用趨勢時發生未知錯誤: {e}")
+            return {
+                "dates": date_range_str,
+                "messages": [0]*len(date_range_str),
+                "users": [0]*len(date_range_str)
+            }
 
-    def export_stats(self, format="json"):
+    def export_stats(self, format_type="json"):  # 參數名改為 format_type
         """
         匯出統計數據
 
         參數:
-            format: 輸出格式 (目前僅支援 json)
+            format_type: 輸出格式 (目前僅支援 json)
         """
-        if format != "json":
+        if format_type != "json":
             raise ValueError("目前僅支援 JSON 格式匯出")
         try:
             conversation_stats = self._get_conversation_stats()
@@ -261,30 +356,38 @@ class Analytics:
                 "generated_at": datetime.datetime.now().isoformat(),
                 "conversation_stats": conversation_stats,
                 "user_stats": user_stats,
-                "top_keywords": dict(keyword_stats),
+                "top_keywords": dict(keyword_stats),  # 轉換為 dict
                 "usage_trends": usage_trends,
             }
+            # 確保 self.stats_path 是有效的
+            if not self.stats_path:
+                logger.error("統計檔案路徑 (self.stats_path) 未設定。無法匯出。")
+                return None
+
+            os.makedirs(os.path.dirname(self.stats_path), exist_ok=True)  # 確保目錄存在
             with open(self.stats_path, "w", encoding="utf-8") as f:
                 json.dump(export_data, f, ensure_ascii=False, indent=2)
+            logger.info(f"統計數據已成功匯出至: {self.stats_path}")
             return self.stats_path
         except Exception as e:
-            logger.exception("匯出統計數據失敗: %s", e)
+            logger.exception(f"匯出 MS SQL Server 統計數據失敗: {e}")
             return None
 
     def _get_conversation_stats(self):
-        """取得對話統計數據"""
+        """取得對話統計數據 (MS SQL Server 版本)"""
         try:
-            with self._get_db_connection() as conn:
+            with db._get_connection() as conn:
                 cursor = conn.cursor()
-                cursor.execute("SELECT COUNT(*) FROM conversations")
+                cursor.execute("SELECT COUNT(*) FROM conversations;")
                 total_messages = cursor.fetchone()[0]
                 cursor.execute(
-                    "SELECT role, COUNT(*) FROM conversations GROUP BY role"
+                    "SELECT sender_role, COUNT(*) FROM conversations GROUP BY sender_role;"
                 )
                 role_counts = dict(cursor.fetchall())
+                # 最近24小時訊息
                 cursor.execute(
-                    "SELECT COUNT(*) FROM conversations WHERE timestamp > "
-                    "datetime('now', '-1 day')"
+                    "SELECT COUNT(*) FROM conversations "
+                    "WHERE timestamp >= DATEADD(day, -1, GETDATE());"
                 )
                 last_24h = cursor.fetchone()[0]
                 return {
@@ -292,34 +395,46 @@ class Analytics:
                     "role_distribution": role_counts,
                     "last_24h": last_24h,
                 }
+        except pyodbc.Error as e:
+            logger.exception(f"從 MS SQL Server 取得對話統計數據失敗: {e}")
+            return {}
         except Exception as e:
-            logger.exception("取得對話統計數據失敗: %s", e)
+            logger.exception(f"取得對話統計數據時發生未知錯誤: {e}")
             return {}
 
     def _get_user_stats(self):
-        """取得使用者統計數據"""
+        """取得使用者統計數據 (MS SQL Server 版本)"""
         try:
-            with self._get_db_connection() as conn:
+            with db._get_connection() as conn:
                 cursor = conn.cursor()
-                cursor.execute("SELECT COUNT(DISTINCT user_id) FROM conversations")
+                # 總使用者數 (基於 user_preferences 表)
+                cursor.execute("SELECT COUNT(DISTINCT user_id) FROM user_preferences;")
                 total_users = cursor.fetchone()[0]
+
+                # 最近7天活躍使用者 (基於 conversations 表的 sender_id)
                 cursor.execute(
-                    "SELECT COUNT(DISTINCT user_id) FROM conversations WHERE timestamp > "
-                    "datetime('now', '-7 day')"
+                    "SELECT COUNT(DISTINCT sender_id) FROM conversations "
+                    "WHERE timestamp >= DATEADD(day, -7, GETDATE());"
                 )
-                active_users = cursor.fetchone()[0]
+                active_users_7d = cursor.fetchone()[0]
+
+                # 語言分佈
                 cursor.execute(
-                    "SELECT language, COUNT(*) FROM user_preferences GROUP BY language"
+                    "SELECT language, COUNT(*) FROM user_preferences GROUP BY language;"
                 )
                 language_distribution = dict(cursor.fetchall())
                 return {
                     "total_users": total_users,
-                    "active_users": active_users,
+                    "active_users_last_7_days": active_users_7d,
                     "language_distribution": language_distribution,
                 }
+        except pyodbc.Error as e:
+            logger.exception(f"從 MS SQL Server 取得使用者統計數據失敗: {e}")
+            return {}
         except Exception as e:
-            logger.exception("取得使用者統計數據失敗: %s", e)
+            logger.exception(f"取得使用者統計數據時發生未知錯誤: {e}")
             return {}
 
 
+# 全域 analytics 實例
 analytics = Analytics()

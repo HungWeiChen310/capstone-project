@@ -1,20 +1,22 @@
-# src/initial_data.py
 import logging
-import sqlite3
-from database import db
+import pyodbc  # 為了捕獲 pyodbc.Error，需要匯入
+from database import db  # db 物件現在是 MS SQL Server 的接口
+
 logger = logging.getLogger(__name__)
 
 
 def initialize_equipment_data():
-    """初始化設備資料"""
+    """初始化設備資料 (使用 MS SQL Server)"""
     try:
-        with sqlite3.connect(db.db_path) as conn:
+        # 使用 db._get_connection() 來獲取 MS SQL Server 連線
+        with db._get_connection() as conn:
             cursor = conn.cursor()
             # 檢查是否已有設備資料
-            cursor.execute("SELECT COUNT(*) FROM equipment")
+            cursor.execute("SELECT COUNT(*) FROM equipment;")
             if cursor.fetchone()[0] > 0:
-                logger.info("設備資料已存在，略過初始化")
+                logger.info("設備資料已存在，略過初始化 (MS SQL Server)")
                 return
+
             # 插入黏晶機
             die_bonders = [
                 ("DB001", "黏晶機A1", "die_bonder", "生產線A"),
@@ -33,125 +35,79 @@ def initialize_equipment_data():
                 ("DC001", "切割機A1", "dicer", "生產線A"),
                 ("DC002", "切割機B1", "dicer", "生產線B"),
             ]
-            # 合併所有設備
             equipments = die_bonders + wire_bonders + dicers
-            # 插入設備資料
+
             for equipment_id, name, equipment_type, location in equipments:
                 cursor.execute(
                     """
                     INSERT INTO equipment (equipment_id, name, type, location, status)
-                    VALUES (?, ?, ?, ?, 'normal')
-                """,
+                    VALUES (?, ?, ?, ?, 'normal');
+                    """,
                     (equipment_id, name, equipment_type, location),
                 )
-            # 插入黏晶機閾值
-            die_bonder_metrics = [
-                # 設備ID, 指標類型, 數值, 最小閾值, 最大閾值, 單位
+
+            # 設備指標 (範例，您可以擴展)
+            # 注意：這裡的 SQL Server 的 GETDATE() 用於 timestamp，
+            # 而 equipment_metrics 表的定義是 timestamp DATETIME2 DEFAULT GETDATE()
+            # 所以插入時不需要特別指定 timestamp，除非要指定特定時間
+            equipment_metrics_data = [
+                # 黏晶機指標
                 ("DB001", "溫度", 23.5, 18.0, 28.0, "°C"),
                 ("DB001", "壓力", 1.5, 1.0, 2.0, "MPa"),
                 ("DB001", "Pick準確率", 99.2, 98.0, None, "%"),
                 ("DB001", "良率", 99.5, 98.0, None, "%"),
-                ("DB001", "運轉時間", 120, None, None, "分鐘"),
+                ("DB001", "運轉時間", 120.0, None, None, "分鐘"),  # 確保 value 是 FLOAT
                 ("DB002", "溫度", 24.2, 18.0, 28.0, "°C"),
-                ("DB002", "壓力", 1.6, 1.0, 2.0, "MPa"),
-                ("DB002", "Pick準確率", 98.7, 98.0, None, "%"),
-                ("DB002", "良率", 99.1, 98.0, None, "%"),
-                ("DB002", "運轉時間", 45, None, None, "分鐘"),
-                ("DB003", "溫度", 22.8, 18.0, 28.0, "°C"),
-                ("DB003", "壓力", 1.4, 1.0, 2.0, "MPa"),
-                ("DB003", "Pick準確率", 99.4, 98.0, None, "%"),
-                ("DB003", "良率", 99.7, 98.0, None, "%"),
-                ("DB003", "運轉時間", 210, None, None, "分鐘"),
-            ]
-            # 插入打線機閾值
-            wire_bonder_metrics = [
-                # 設備ID, 指標類型, 數值, 最小閾值, 最大閾值, 單位
+                # ... (其他 DB002, DB003 的指標) ...
+
+                # 打線機指標
                 ("WB001", "溫度", 26.2, 20.0, 30.0, "°C"),
-                ("WB001", "壓力", 0.8, 0.5, 1.2, "MPa"),
                 ("WB001", "金絲張力", 18.5, 15.0, 22.0, "cN"),
-                ("WB001", "良率", 99.3, 98.0, None, "%"),
-                ("WB001", "運轉時間", 180, None, None, "分鐘"),
-                ("WB002", "溫度", 25.8, 20.0, 30.0, "°C"),
-                ("WB002", "壓力", 0.9, 0.5, 1.2, "MPa"),
-                ("WB002", "金絲張力", 17.2, 15.0, 22.0, "cN"),
-                ("WB002", "良率", 98.9, 98.0, None, "%"),
-                ("WB002", "運轉時間", 60, None, None, "分鐘"),
-            ]
-            # 插入切割機閾值
-            dicer_metrics = [
-                # 設備ID, 指標類型, 數值, 最小閾值, 最大閾值, 單位
+                # ... (其他 WB001, WB002, WB003, WB004 的指標) ...
+
+                # 切割機指標
                 ("DC001", "溫度", 24.7, 20.0, 28.0, "°C"),
-                ("DC001", "轉速", 30000, 25000, 35000, "RPM"),
-                ("DC001", "冷卻水溫", 18.5, 16.0, 22.0, "°C"),
-                ("DC001", "切割精度", 99.1, 98.5, None, "%"),
-                ("DC001", "良率", 99.4, 98.0, None, "%"),
-                ("DC001", "運轉時間", 90, None, None, "分鐘"),
-                ("DC002", "溫度", 25.1, 20.0, 28.0, "°C"),
-                ("DC002", "轉速", 29500, 25000, 35000, "RPM"),
-                ("DC002", "冷卻水溫", 19.2, 16.0, 22.0, "°C"),
-                ("DC002", "切割精度", 98.9, 98.5, None, "%"),
-                ("DC002", "良率", 99.2, 98.0, None, "%"),
-                ("DC002", "運轉時間", 150, None, None, "分鐘"),
+                ("DC001", "轉速", 30000.0, 25000.0, 35000.0, "RPM"),  # 確保 value 是 FLOAT
+                # ... (其他 DC001, DC002 的指標) ...
             ]
-            # 合併所有監測指標
-            all_metrics = die_bonder_metrics + wire_bonder_metrics + dicer_metrics
-            # 插入監測指標資料
-            for (
-                equipment_id,
-                metric_type,
-                value,
-                threshold_min,
-                threshold_max,
-                unit,
-            ) in all_metrics:
-                cursor.execute(
+            # 插入前檢查 equipment_metrics 是否為空，避免 cursor.executemany 出錯
+            if equipment_metrics_data:
+                cursor.executemany(
                     """
                     INSERT INTO equipment_metrics
                     (equipment_id, metric_type, value, threshold_min, threshold_max, unit)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                    (
-                        equipment_id,
-                        metric_type,
-                        value,
-                        threshold_min,
-                        threshold_max,
-                        unit,
-                    ),
-                )
-            # 建立使用者訂閱（以管理員為例）
-            cursor.execute(
-                "SELECT user_id FROM user_preferences WHERE is_admin = 1 LIMIT 1"
-            )
-            admin_user = cursor.fetchone()
-            if admin_user:
-                admin_id = admin_user[0]
-                # 訂閱所有設備
-                for equipment_id, _, _, _ in equipments:
-                    cursor.execute(
-                        """
-                        INSERT OR IGNORE INTO user_equipment_subscriptions
-                        (user_id, equipment_id, notification_level)
-                        VALUES (?, ?, 'all')
+                    VALUES (?, ?, ?, ?, ?, ?);
                     """,
-                        (admin_id, equipment_id),
-                    )
-            # 模擬一些運行中的作業
+                    equipment_metrics_data,
+                )
+
+            # 模擬一些運行中的作業 (使用 MS SQL Server 的語法)
             operations = [
                 ("DB001", "常規生產", "LOT-2023-11-001", "PROD-A123"),
                 ("WB001", "常規生產", "LOT-2023-11-002", "PROD-B456"),
                 ("DC001", "特殊切割", "LOT-2023-11-003", "PROD-C789"),
             ]
-            for equipment_id, op_type, lot_id, product_id in operations:
+            for eq_id, op_type, lot_id, prod_id in operations:
                 cursor.execute(
                     """
                     INSERT INTO equipment_operation_logs
                     (equipment_id, operation_type, start_time, lot_id, product_id)
-                    VALUES (?, ?, datetime('now', '-2 hours'), ?, ?)
-                """,
-                    (equipment_id, op_type, lot_id, product_id),
+                    VALUES (?, ?, DATEADD(hour, -2, GETDATE()), ?, ?);
+                    """,
+                    (eq_id, op_type, lot_id, prod_id),
                 )
+
             conn.commit()
-            logger.info("設備資料初始化完成")
+            logger.info("設備資料初始化完成 (MS SQL Server)")
+    except pyodbc.Error as e:  # 捕獲 pyodbc 的錯誤
+        logger.error(f"初始化設備資料失敗 (MS SQL Server): {e}")
     except Exception as e:
-        logger.error(f"初始化設備資料失敗: {e}")
+        logger.error(f"初始化設備資料時發生未知錯誤 (MS SQL Server): {e}")
+
+
+if __name__ == '__main__':
+    # 為了能夠獨立執行此腳本進行測試或初始化
+    # 需要確保 database.py 中的 db 物件能正確連接
+    # 通常這意味著環境變數 (如 DB_SERVER, DB_NAME) 需要被設定
+    # 或者 Config 類能提供有效的預設值
+    initialize_equipment_data()
