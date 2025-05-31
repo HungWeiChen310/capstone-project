@@ -3,7 +3,7 @@ import os
 import re
 import time
 from html import escape
-from openai import OpenAI
+import openai # Modified for specific exception imports
 from database import db
 
 
@@ -13,10 +13,17 @@ def sanitize_input(text):
     """
     if not isinstance(text, str):
         return ""
-    # 基本 HTML 跳脫
+    # 基本 HTML 跳脫 - Helps prevent XSS if content is rendered in HTML
     sanitized = escape(text)
-    # 移除潛在惡意字元
+    # 移除或替換潛在有害或不需要的字元
+    # Current regex removes characters not in the whitelist.
+    # This includes backticks (`), tildes (~), etc.
+    # If these characters are essential for user input, this regex needs adjustment.
+    # For now, assuming current restrictiveness is intended.
+    # Test cases should verify behavior with special characters and XSS payloads.
     sanitized = re.sub(r'[^\w\s.,;?!@#$%^&*()-=+\[\]{}:"\'/\\<>]', "", sanitized)
+    # Consider if allowing < and > is intended after escape(), as the regex allows them.
+    # If they are meant to be fully removed, add them to the regex removal set or handle separately.
     return sanitized
 
 
@@ -85,9 +92,12 @@ class UserData:
         return conversation
 
     def add_message(self, user_id, role, content):
-        """新增一則訊息到用戶的對話記錄中 (同時儲存到資料庫)"""
+        """新增一則訊息到用戶的對話記錄中 (同時儲存到資料庫)。返回 True 表示成功，False 表示失敗。"""
         # 加入資料庫
-        db.add_message(user_id, role, content)
+        if not db.add_message(user_id, role, content):
+            logger.error(f"UserData: 資料庫新增訊息失敗 (使用者 ID: {user_id})。")
+            return False # Indicate failure
+
         # 更新最後活動時間
         self.user_last_active[user_id] = time.time()
         # 更新記憶體快取
@@ -137,15 +147,22 @@ class OpenAIService:
     """處理與 OpenAI API 的互動邏輯"""
 
     def __init__(self, message, user_id):
-        self.user_id = user_id  # Changed: sanitize_input removed for user_id
-        self.message = sanitize_input(message)  # No change for message
-        # 從環境變數獲取 OpenAI API 金鑰
+        # user_id is used for database lookups and OpenAI 'user' field, assumed to be safe.
+        # Avoid logging user_id excessively if PII is a concern for log access.
+        self.user_id = user_id
+        self.message = sanitize_input(message)
+
         self.api_key = os.getenv("OPENAI_API_KEY")
         if not self.api_key:
+            logger.critical("OpenAIService: OpenAI API 金鑰未在環境變數中設置。")
             raise ValueError("OpenAI API 金鑰未設置")
-        self.client = OpenAI(api_key=self.api_key)
+        try:
+            self.client = openai.OpenAI(api_key=self.api_key)
+        except Exception as e:
+            logger.critical(f"OpenAIService: 初始化 OpenAI client 失敗: {e}", exc_info=True)
+            raise RuntimeError(f"無法初始化 OpenAI client: {e}")
+
         self.max_conversation_length = 10  # 保留最近的 10 輪對話
-        # 取得使用者語言偏好
         self.user_prefs = db.get_user_preference(user_id)
         self.language = self.user_prefs.get("language", "zh-Hant")
 
@@ -179,38 +196,71 @@ class OpenAIService:
         if not conversation or conversation[0]["role"] != "system":
             system_prompt = get_system_prompt(self.language)
             conversation.insert(0, {"role": "system", "content": system_prompt})
-        # 添加用戶的新訊息
-        user_data.add_message(self.user_id, "user", self.message)
-        try:
-            max_retries = 3
-            retry_count = 0
-            while retry_count < max_retries:
-                try:
-                    # 呼叫 OpenAI API
-                    response = self.client.chat.completions.create(
-                        model="gpt-3.5-turbo",
-                        messages=conversation,
-                        max_tokens=500,
-                        timeout=10,  # 設定超時時間
-                    )
-                    # 取得 AI 回應
-                    ai_message = response.choices[0].message.content
-                    # 將 AI 回應加入對話歷史
-                    user_data.add_message(self.user_id, "assistant", ai_message)
-                    return ai_message
-                except Exception:
-                    retry_count += 1
-                    logging.warning(f"OpenAI API 請求失敗，正在重試第 {retry_count + 1} 次...")
-                    time.sleep(1)  # 等待 1 秒再重試
-            # 若所有重試都失敗，使用備用回應
-            fallback_message = self.get_fallback_response()
-            user_data.add_message(self.user_id, "assistant", fallback_message)
-            return fallback_message
-        except Exception as e:
-            logging.error(f"OpenAI API 錯誤: {e}")
-            fallback_message = self.get_fallback_response(e)
-            user_data.add_message(self.user_id, "assistant", fallback_message)
-            return fallback_message
+
+        # 添加用戶的新訊息到對話歷史 (記憶體與資料庫)
+        if not user_data.add_message(self.user_id, "user", self.message):
+            # Failed to save user message to DB, critical issue
+            logger.error(f"OpenAIService: 無法將用戶 {self.user_id} 的訊息儲存到資料庫。中止 OpenAI 請求。")
+            return self.get_fallback_response("Failed to record user message.")
+
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                response = self.client.chat.completions.create(
+                    model="gpt-3.5-turbo",  # Consider making model configurable
+                    messages=conversation,
+                    max_tokens=500,  # Consider making max_tokens configurable
+                    timeout=20,      # Increased timeout
+                    user=self.user_id # Pass user_id to OpenAI for monitoring/moderation
+                )
+                ai_message = response.choices[0].message.content.strip()
+
+                if not user_data.add_message(self.user_id, "assistant", ai_message):
+                    # Failed to save AI message to DB, but we got a response
+                    logger.error(f"OpenAIService: 無法將 AI 回應儲存到資料庫 (使用者 ID: {self.user_id})。AI 回應仍會回傳。")
+                return ai_message
+
+            except openai.AuthenticationError as e:
+                logger.critical(f"OpenAI API 驗證失敗 (Attempt {attempt + 1}/{max_retries}): {e}", exc_info=True)
+                # No retry for auth errors
+                break
+            except openai.RateLimitError as e:
+                logger.warning(f"OpenAI API 速率限制 (Attempt {attempt + 1}/{max_retries}): {e}. 等待 {2 ** attempt} 秒後重試。", exc_info=True)
+                if attempt < max_retries - 1:
+                    time.sleep(2 ** attempt) # Exponential backoff
+                else: # Last attempt failed
+                    break
+            except openai.APITimeoutError as e:
+                logger.warning(f"OpenAI API 請求超時 (Attempt {attempt + 1}/{max_retries}): {e}. 等待 {2 ** attempt} 秒後重試。", exc_info=True)
+                if attempt < max_retries - 1:
+                    time.sleep(2 ** attempt)
+                else:
+                    break
+            except openai.APIConnectionError as e:
+                logger.warning(f"OpenAI API 連線錯誤 (Attempt {attempt + 1}/{max_retries}): {e}. 等待 {2 ** attempt} 秒後重試。", exc_info=True)
+                if attempt < max_retries - 1:
+                    time.sleep(2 ** attempt)
+                else:
+                    break
+            except openai.APIError as e: # General OpenAI API error
+                logger.error(f"OpenAI API 發生錯誤 (Attempt {attempt + 1}/{max_retries}): {e}", exc_info=True)
+                if attempt < max_retries - 1:
+                    time.sleep(1) # Simple backoff for other API errors
+                else:
+                    break
+            except Exception as e: # Catch other unexpected errors during API call
+                logger.exception(f"呼叫 OpenAI API 時發生非預期錯誤 (Attempt {attempt + 1}/{max_retries}): {e}")
+                if attempt < max_retries - 1:
+                    time.sleep(1)
+                else: # Last attempt failed
+                    break
+
+        # If all retries fail or a non-retryable error occurred
+        logger.error(f"OpenAI API 請求在 {max_retries} 次嘗試後失敗 (使用者 ID: {self.user_id})。")
+        fallback_message = self.get_fallback_response("API request failed after retries.")
+        if not user_data.add_message(self.user_id, "assistant", fallback_message):
+             logger.error(f"OpenAIService: 無法將備用訊息儲存到資料庫 (使用者 ID: {self.user_id})。")
+        return fallback_message
 
 
 def reply_message(event):
@@ -226,17 +276,71 @@ def reply_message(event):
 
 # 如果直接執行此檔案，則啟動 Flask 應用
 if __name__ == "__main__":
-    # 避免循環引用問題
-    import importlib.util
-    import sys
-    spec = importlib.util.spec_from_file_location(
-        "linebot_connect", os.path.join(os.path.dirname(__file__), "linebot_connect.py")
-    )
-    linebot_connect = importlib.util.module_from_spec(spec)
-    sys.modules["linebot_connect"] = linebot_connect
-    spec.loader.exec_module(linebot_connect)
-    port = int(os.environ.get("PORT", os.getenv("HTTPS_PORT", 443)))
-    linebot_connect.app.run(ssl_context=(
-        os.environ.get('SSL_CERT_PATH', 'certs/capstone-project.me-chain.pem'),  # fullchain
-        os.environ.get('SSL_KEY_PATH', 'certs/capstone-project.me-key.pem')),  # key
-        host="0.0.0.0", port=port, debug=False)
+    try:
+        # 動態導入 linebot_connect 以避免潛在的循環引用
+        # 並允許 linebot_connect 中的初始化（如 db）在 main 中的 db 實例化後進行
+        import importlib.util
+        import sys
+
+        # Assuming linebot_connect.py is in the same directory (src)
+        module_path = os.path.join(os.path.dirname(__file__), "linebot_connect.py")
+        if not os.path.exists(module_path):
+            logger.critical(f"無法找到 linebot_connect.py 於: {module_path}")
+            sys.exit(1)
+
+        spec = importlib.util.spec_from_file_location("linebot_connect", module_path)
+        if spec is None or spec.loader is None:
+            logger.critical(f"無法為 linebot_connect.py 創建模組規格。")
+            sys.exit(1)
+
+        linebot_connect = importlib.util.module_from_spec(spec)
+        sys.modules["linebot_connect"] = linebot_connect # Add to sys.modules before exec
+        spec.loader.exec_module(linebot_connect)
+
+        # Initialize equipment data and scheduler from linebot_connect
+        # These functions should ideally be idempotent or handle multiple calls safely
+        if hasattr(linebot_connect, 'initialize_equipment_data'):
+            try:
+                logger.info("正在初始化設備數據...")
+                linebot_connect.initialize_equipment_data()
+            except Exception as e_init:
+                logger.error(f"初始化設備數據時發生錯誤: {e_init}", exc_info=True)
+
+        if hasattr(linebot_connect, 'start_scheduler'):
+            try:
+                logger.info("正在啟動排程器...")
+                linebot_connect.start_scheduler()
+            except Exception as e_sched:
+                logger.error(f"啟動排程器時發生錯誤: {e_sched}", exc_info=True)
+
+        # Get port and debug settings from Config object (src/config.py)
+        from config import Config
+        port = Config.PORT
+        # SSL context should also ideally be managed via Config or be more robust
+        ssl_cert_path = os.getenv('SSL_CERT_PATH', 'certs/capstone-project.me-chain.pem')
+        ssl_key_path = os.getenv('SSL_KEY_PATH', 'certs/capstone-project.me-key.pem')
+
+        if not os.path.exists(ssl_cert_path) or not os.path.exists(ssl_key_path):
+            logger.warning(f"SSL 憑證或金鑰檔案找不到。路徑: Cert='{ssl_cert_path}', Key='{ssl_key_path}'.")
+            logger.warning("Flask 應用程式將以 HTTP 模式啟動 (若 DEBUG=True 且非生產環境)。")
+            # Only run without SSL if not in production or explicitly allowed for debug
+            if Config.APP_ENV != "production" and Config.DEBUG:
+                 linebot_connect.app.run(host="0.0.0.0", port=port, debug=Config.DEBUG)
+            else:
+                logger.critical("生產環境中 SSL 憑證遺失，無法啟動伺服器。")
+                sys.exit(1)
+        else:
+            logger.info(f"Flask 應用程式將在 HTTPS模式下啟動於埠 {port}")
+            linebot_connect.app.run(
+                ssl_context=(ssl_cert_path, ssl_key_path),
+                host="0.0.0.0", port=port, debug=Config.DEBUG
+            )
+
+    except ImportError as e_imp:
+        logger.critical(f"啟動主應用程式時發生導入錯誤: {e_imp}", exc_info=True)
+        sys.exit(1)
+    except SystemExit as e_sys: # Catch sys.exit from Config validation or SSL issues
+        logger.info(f"應用程式因 SystemExit 而關閉: {e_sys.code}") # Usually already logged by Config
+    except Exception as e_main:
+        logger.critical(f"啟動主應用程式時發生未預期錯誤: {e_main}", exc_info=True)
+        sys.exit(1)
