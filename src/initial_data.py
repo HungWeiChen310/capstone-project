@@ -1,113 +1,322 @@
+import re
 import logging
-import pyodbc  # 為了捕獲 pyodbc.Error，需要匯入
-from database import db  # db 物件現在是 MS SQL Server 的接口
+import pandas as pd
+import pyodbc
+from database import db
 
+
+# --- 1. 設定日誌記錄 ---
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
 
 
-def initialize_equipment_data():
-    """初始化設備資料 (使用 MS SQL Server)"""
+# --- 2. 設定 Excel 檔案路徑 ---
+# 請確保此路徑對於您的執行環境是正確的
+EXCEL_FILE_PATH = r'data\simulated_data (1).xlsx'
+
+
+# --- 3. 輔助函數 (無需修改) ---
+def parse_threshold_string(threshold_str):
+    if pd.isna(threshold_str) or threshold_str is None:
+        return None, None, None
+    s = str(threshold_str).strip()
+    match = re.match(r'([><=~]?)\s*([0-9.]+)\s*([~-]\s*([0-9.]+))?', s)
+    if not match:
+        return None, None, None
+    op, val1, _, val2 = match.groups()
     try:
-        # 使用 db._get_connection() 來獲取 MS SQL Server 連線
+        val1 = float(val1) if val1 else None
+        val2 = float(val2) if val2 else None
+    except ValueError:
+        return None, None, None
+    if op == '>':
+        return val1, None, '>'
+    elif op == '<':
+        return None, val1, '<'
+    elif op == '~' or _ == '-':
+        return val1, val2, None
+    else:
+        return val1, val1, None
+
+
+def parse_and_transform_threshold_row(row):
+    metric_type = row.get("異常類型")
+    normal_value, _, _ = parse_threshold_string(row.get("正常值"))
+    warning_min, warning_max, _ = parse_threshold_string(row.get("輕度異常"))
+    critical_min, critical_max, _ = parse_threshold_string(row.get("中度異常"))
+    emergency_min, emergency_max, emergency_op = parse_threshold_string(
+        row.get("重度異常")
+    )
+    return (metric_type, normal_value, warning_min, warning_max,
+            critical_min, critical_max, emergency_min, emergency_max,
+            emergency_op)
+
+
+# --- 4. 完整的表格匯入設定 (包含所有統計表) ---
+TABLE_CONFIGS = [
+    {
+        "excel_sheet_name": "equipment",
+        "sql_table_name": "equipment",
+        "sql_columns": ["equipment_id", "name", "eq_type", "location",
+                        "status", "last_updated"],
+        "transform_row_data": lambda row: (
+            row.get('equipment_id'), row.get('name'), row.get('eq_type'),
+            row.get('location'), row.get('status'),
+            pd.to_datetime(row.get('last_updated'))
+            if pd.notna(row.get('last_updated')) else None
+        )
+    },
+    {
+        "excel_sheet_name": "alert_history",
+        "sql_table_name": "alert_history",
+        "sql_columns": ["id", "equipment_id", "alert_type", "severity",
+                        "message", "is_resolved", "created_at",
+                        "resolved_at", "resolved_by", "resolution_notes"],
+        "transform_row_data": lambda row: (
+            row.get('ID'), row.get('equipment_id'), row.get('alert_type'),
+            row.get('severity'),
+            str(row.get('訊息')) if pd.notna(row.get('訊息')) else None,
+            row.get('is_resolved'),
+            pd.to_datetime(row.get('created_at'))
+            if pd.notna(row.get('created_at')) else None,
+            pd.to_datetime(row.get('resolved_at'))
+            if pd.notna(row.get('resolved_at')) else None,
+            str(row.get('resolved_by'))
+            if pd.notna(row.get('resolved_by')) else None,
+            str(row.get('resolution_notes'))
+            if pd.notna(row.get('resolution_notes')) else None
+        )
+    },
+    {
+        "excel_sheet_name": "設備監測數據",
+        "sql_table_name": "equipment_metrics",
+        "sql_columns": ["id", "equipment_id", "metric_type", "status",
+                        "value", "unit", "timestamp"],
+        "transform_row_data": lambda row: (
+            row.get('id'), row.get('equipment_id'), row.get('metric_type'),
+            str(row.get('狀態')) if pd.notna(row.get('狀態')) else None,
+            row.get('value'),
+            str(row.get('unit')) if pd.notna(row.get('unit')) else None,
+            pd.to_datetime(row.get('timestamp'))
+            if pd.notna(row.get('timestamp')) else None
+        )
+    },
+    {
+        "excel_sheet_name": "切割機標準值",
+        "sql_table_name": "equipment_metric_thresholds",
+        "sql_columns": ["metric_type", "normal_value", "warning_min",
+                        "warning_max", "critical_min", "critical_max",
+                        "emergency_min", "emergency_max", "emergency_op"],
+        "transform_row_data": parse_and_transform_threshold_row
+    },
+    {
+        "excel_sheet_name": "異常紀錄error_log",
+        "sql_table_name": "error_logs",
+        "sql_columns": ["log_date", "error_id", "equipment_id",
+                        "deformation_mm", "rpm", "event_time",
+                        "detected_anomaly_type", "downtime_duration",
+                        "resolved_at", "resolution_notes"],
+        "transform_row_data": lambda row: (
+            pd.to_datetime(str(row.get('日期')))
+            if pd.notna(row.get('日期')) else None,
+            str(row.get('error_id')), str(row.get('equipment_id')),
+            row.get('變形量(mm)'), row.get('轉速'),
+            pd.to_datetime(str(row.get('時間')))
+            if pd.notna(row.get('時間')) else None,
+            str(row.get('偵測異常類型')), str(row.get('停機時長')),
+            pd.to_datetime(str(row.get('回復時間')))
+            if pd.notna(row.get('回復時間')) else None,
+            str(row.get('備註')) if pd.notna(row.get('備註')) else None
+        )
+    },
+    {
+        "excel_sheet_name": "運作統計(月)",
+        "sql_table_name": "stats_operational_monthly",
+        "sql_columns": ["equipment_id", "year", "month",
+                        "total_operation_duration", "total_downtime_duration",
+                        "downtime_rate_percent", "description"],
+        "transform_row_data": lambda row: (
+            str(row.get('equipment_id')), row.get('年'), row.get('月'),
+            str(row.get('總運作時長')),
+            str(row.get('停機總時長')), str(row.get('停機率(%)')),
+            str(row.get('說明'))
+        )
+    },
+    {
+        "excel_sheet_name": "運作統計(季)",
+        "sql_table_name": "stats_operational_quarterly",
+        "sql_columns": ["equipment_id", "year", "quarter",
+                        "total_operation_duration", "total_downtime_duration",
+                        "downtime_rate_percent", "description"],
+        "transform_row_data": lambda row: (
+            str(row.get('equipment_id')), row.get('年'), row.get('季度'),
+            str(row.get('總運作時長')),
+            str(row.get('停機總時長')), str(row.get('停機率(%)')),
+            str(row.get('說明'))
+        )
+    },
+    {
+        "excel_sheet_name": "運作統計(年)",
+        "sql_table_name": "stats_operational_yearly",
+        "sql_columns": ["equipment_id", "year", "total_operation_duration",
+                        "total_downtime_duration", "downtime_rate_percent",
+                        "description"],
+        "transform_row_data": lambda row: (
+            str(row.get('equipment_id')), row.get('年'),
+            str(row.get('總運作時長')),
+            str(row.get('停機總時長')), str(row.get('停機率(%)')),
+            str(row.get('說明'))
+        )
+    },
+    {
+        "excel_sheet_name": "各異常統計(月)",
+        "sql_table_name": "stats_abnormal_monthly",
+        "sql_columns": ["equipment_id", "year", "month",
+                        "detected_anomaly_type", "downtime_duration",
+                        "downtime_rate_percent", "description"],
+        "transform_row_data": lambda row: (
+            str(row.get('equipment_id')), row.get('年'), row.get('月'),
+            str(row.get('偵測異常類型')),
+            str(row.get('停機時長')), str(row.get('停機率(%)')),
+            str(row.get('說明'))
+        )
+    },
+    {
+        "excel_sheet_name": "各異常統計(季)",
+        "sql_table_name": "stats_abnormal_quarterly",
+        "sql_columns": ["equipment_id", "year", "quarter",
+                        "detected_anomaly_type", "downtime_duration",
+                        "downtime_rate_percent", "description"],
+        "transform_row_data": lambda row: (
+            str(row.get('equipment_id')), row.get('年'), row.get('季度'),
+            str(row.get('偵測異常類型')),
+            str(row.get('停機時長')), str(row.get('停機率(%)')),
+            str(row.get('說明'))
+        )
+    },
+    {
+        "excel_sheet_name": "各異常統計(年)",
+        "sql_table_name": "stats_abnormal_yearly",
+        "sql_columns": ["equipment_id", "year", "detected_anomaly_type",
+                        "downtime_duration", "downtime_rate_percent",
+                        "description"],
+        "transform_row_data": lambda row: (
+            str(row.get('equipment_id')), row.get('年'),
+            str(row.get('偵測異常類型')),
+            str(row.get('停機時長')), str(row.get('停機率(%)')),
+            str(row.get('說明'))
+        )
+    }
+]
+
+
+# --- 5. 修改後的匯入主程式 ---
+def import_data_from_excel():
+    """從指定的 Excel 檔案讀取數據，並使用高效能的批次插入將其匯入到資料庫中。"""
+    try:
         with db._get_connection() as conn:
             cursor = conn.cursor()
-            # 檢查是否已有設備資料
-            cursor.execute("SELECT COUNT(*) FROM equipment;")
-            if cursor.fetchone()[0] > 0:
-                logger.info("設備資料已存在，略過初始化 (MS SQL Server)")
-                return
+            cursor.fast_executemany = True
+            logger.info("成功連接到 MS SQL 資料庫，已啟用 fast_executemany。")
 
-            # 插入黏晶機
-            die_bonders = [
-                ("DB001", "黏晶機A1", "die_bonder", "生產線A"),
-                ("DB002", "黏晶機A2", "die_bonder", "生產線A"),
-                ("DB003", "黏晶機B1", "die_bonder", "生產線B"),
-            ]
-            # 插入打線機
-            wire_bonders = [
-                ("WB001", "打線機A1", "wire_bonder", "生產線A"),
-                ("WB002", "打線機A2", "wire_bonder", "生產線A"),
-                ("WB003", "打線機B1", "wire_bonder", "生產線B"),
-                ("WB004", "打線機B2", "wire_bonder", "生產線B"),
-            ]
-            # 插入切割機
-            dicers = [
-                ("DC001", "切割機A1", "dicer", "生產線A"),
-                ("DC002", "切割機B1", "dicer", "生產線B"),
-            ]
-            equipments = die_bonders + wire_bonders + dicers
+            for config in TABLE_CONFIGS:
+                sheet_name = config["excel_sheet_name"]
+                sql_table_name = config["sql_table_name"]
+                sql_columns = config["sql_columns"]
+                transform_row_data = config["transform_row_data"]
 
-            for equipment_id, name, equipment_type, location in equipments:
-                cursor.execute(
-                    """
-                    INSERT INTO equipment (equipment_id, name, type, location, status)
-                    VALUES (?, ?, ?, ?, 'normal');
-                    """,
-                    (equipment_id, name, equipment_type, location),
+                logger.info(
+                    f"--- 開始處理資料表: {sql_table_name} (來源: {sheet_name}) ---"
                 )
 
-            # 設備指標 (範例，您可以擴展)
-            # 注意：這裡的 SQL Server 的 GETDATE() 用於 timestamp，
-            # 而 equipment_metrics 表的定義是 timestamp DATETIME2 DEFAULT GETDATE()
-            # 所以插入時不需要特別指定 timestamp，除非要指定特定時間
-            equipment_metrics_data = [
-                # 黏晶機指標
-                ("DB001", "溫度", 23.5, 18.0, 28.0, "°C"),
-                ("DB001", "壓力", 1.5, 1.0, 2.0, "MPa"),
-                ("DB001", "Pick準確率", 99.2, 98.0, None, "%"),
-                ("DB001", "良率", 99.5, 98.0, None, "%"),
-                ("DB001", "運轉時間", 120.0, None, None, "分鐘"),  # 確保 value 是 FLOAT
-                ("DB002", "溫度", 24.2, 18.0, 28.0, "°C"),
-                # ... (其他 DB002, DB003 的指標) ...
+                try:
+                    cursor.execute(f"SELECT COUNT(*) FROM {sql_table_name}")
+                    if cursor.fetchone()[0] > 0:
+                        logger.info(f"資料表 '{sql_table_name}' 已存在資料，跳過匯入。")
+                        continue
 
-                # 打線機指標
-                ("WB001", "溫度", 26.2, 20.0, 30.0, "°C"),
-                ("WB001", "金絲張力", 18.5, 15.0, 22.0, "cN"),
-                # ... (其他 WB001, WB002, WB003, WB004 的指標) ...
+                    data_frame = pd.read_excel(EXCEL_FILE_PATH, sheet_name=sheet_name)
+                    data_frame = data_frame.where(pd.notna(data_frame), None)
 
-                # 切割機指標
-                ("DC001", "溫度", 24.7, 20.0, 28.0, "°C"),
-                ("DC001", "轉速", 30000.0, 25000.0, 35000.0, "RPM"),  # 確保 value 是 FLOAT
-                # ... (其他 DC001, DC002 的指標) ...
-            ]
-            # 插入前檢查 equipment_metrics 是否為空，避免 cursor.executemany 出錯
-            if equipment_metrics_data:
-                cursor.executemany(
-                    """
-                    INSERT INTO equipment_metrics
-                    (equipment_id, metric_type, value, threshold_min, threshold_max, unit)
-                    VALUES (?, ?, ?, ?, ?, ?);
-                    """,
-                    equipment_metrics_data,
-                )
+                    if data_frame.empty:
+                        logger.warning(f"工作表 '{sheet_name}' 為空，跳過。")
+                        continue
 
-            # 模擬一些運行中的作業 (使用 MS SQL Server 的語法)
-            operations = [
-                ("DB001", "常規生產", "LOT-2023-11-001", "PROD-A123"),
-                ("WB001", "常規生產", "LOT-2023-11-002", "PROD-B456"),
-                ("DC001", "特殊切割", "LOT-2023-11-003", "PROD-C789"),
-            ]
-            for eq_id, op_type, lot_id, prod_id in operations:
-                cursor.execute(
-                    """
-                    INSERT INTO equipment_operation_logs
-                    (equipment_id, operation_type, start_time, lot_id, product_id)
-                    VALUES (?, ?, DATEADD(hour, -2, GETDATE()), ?, ?);
-                    """,
-                    (eq_id, op_type, lot_id, prod_id),
-                )
+                    logger.info(
+                        f"成功讀取 Excel 工作表 '{sheet_name}'，共 {len(data_frame)} 行。"
+                    )
 
-            conn.commit()
-            logger.info("設備資料初始化完成 (MS SQL Server)")
-    except pyodbc.Error as e:  # 捕獲 pyodbc 的錯誤
-        logger.error(f"初始化設備資料失敗 (MS SQL Server): {e}")
+                    sql_columns_str = ', '.join([f"[{col}]" for col in sql_columns])
+                    placeholders_str = ', '.join(['?' for _ in sql_columns])
+                    insert_sql = (
+                        f"INSERT INTO [{sql_table_name}] ({sql_columns_str}) "
+                        f"VALUES ({placeholders_str})"
+                    )
+
+                    data_to_insert = []
+                    for index, row in data_frame.iterrows():
+                        # --- 修改部分 START ---
+                        # 採納建議，對單行資料轉換進行更精細的錯誤捕捉。
+                        # 這可以幫助我們快速定位是數值問題、類型問題還是其他未知問題。
+                        try:
+                            transformed_tuple = transform_row_data(row)
+                            data_to_insert.append(transformed_tuple)
+                        except ValueError as ve:
+                            # 捕獲數值轉換錯誤，例如 float('無效字串')
+                            logger.error(
+                                f"轉換第 {index + 2} 行資料時數值轉換失敗: {ve}。"
+                                f"資料: {row.to_dict()}"
+                            )
+                        except TypeError as te:
+                            # 捕獲類型錯誤，例如對 NoneType 進行了不支援的操作
+                            logger.error(
+                                f"轉換第 {index + 2} 行資料時類型錯誤: {te}。"
+                                f"資料: {row.to_dict()}"
+                            )
+                        except Exception as e:
+                            # 捕獲所有其他未預期的錯誤
+                            logger.error(
+                                f"轉換第 {index + 2} 行資料時發生未知失敗: {e}。"
+                                f"資料: {row.to_dict()}"
+                            )
+                        # --- 修改部分 END ---
+
+                    if data_to_insert:
+                        logger.info(
+                            f"準備將 {len(data_to_insert)} 行資料批次插入到 "
+                            f"'{sql_table_name}'..."
+                        )
+                        try:
+                            cursor.executemany(insert_sql, data_to_insert)
+                            conn.commit()
+                            logger.info(f"'{sql_table_name}' 資料匯入完成。")
+                        except pyodbc.Error as e:
+                            logger.error(
+                                f"批次插入到 '{sql_table_name}' 時發生資料庫錯誤，"
+                                f"正在回滾: {e}"
+                            )
+                            conn.rollback()
+
+                except pd.errors.ParserError as e:
+                    logger.error(f"解析 Excel 工作表 '{sheet_name}' 失敗: {e}")
+                except Exception as e:
+                    logger.error(
+                        f"處理工作表 '{sheet_name}' 時發生未預期錯誤: {e}"
+                    )
+                    continue
+
+    except FileNotFoundError:
+        logger.error(f"錯誤：找不到 Excel 檔案 '{EXCEL_FILE_PATH}'。請檢查路徑。")
+    except pyodbc.Error as e:
+        logger.error(f"資料庫連線或操作失敗: {e}")
     except Exception as e:
-        logger.error(f"初始化設備資料時發生未知錯誤 (MS SQL Server): {e}")
+        logger.error(f"執行 Excel 匯入腳本時發生未知錯誤: {e}")
 
 
 if __name__ == '__main__':
-    # 為了能夠獨立執行此腳本進行測試或初始化
-    # 需要確保 database.py 中的 db 物件能正確連接
-    # 通常這意味著環境變數 (如 DB_SERVER, DB_NAME) 需要被設定
-    # 或者 Config 類能提供有效的預設值
-    initialize_equipment_data()
+    logger.info("腳本啟動：開始匯入初始資料到資料庫。")
+    import_data_from_excel()
+    logger.info("所有資料匯入任務完成。")
