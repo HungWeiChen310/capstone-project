@@ -8,7 +8,7 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 # 導入自訂模組
 from config import Config
 from equipment_scheduler import start_scheduler
-from initial_data import initialize_equipment_data
+from .initial_data import import_data_from_excel
 # 設定日誌
 logger = logging.getLogger(__name__)
 
@@ -37,7 +37,7 @@ def create_app(testing=False):
             ),
         )
         # 設定密鑰
-        from src.linebot_connect import get_or_create_secret_key
+        from linebot_connect import get_or_create_secret_key
         app.secret_key = get_or_create_secret_key()
         # 處理代理頭信息
         app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1)
@@ -75,17 +75,17 @@ def create_app(testing=False):
                 feature_policy="geolocation 'none'; microphone 'none'; camera 'none'",
             )
         # 初始化數據
-        initialize_equipment_data()
+        import_data_from_excel()
         # 初始化設備監控
         start_scheduler()
         # 注冊關閉處理函數
 
         @app.teardown_appcontext
         def shutdown_app(exception=None):
-            from src.equipment_scheduler import stop_scheduler
+            from equipment_scheduler import stop_scheduler
             stop_scheduler()
         # 注冊路由和處理函數
-        from src.linebot_connect import register_routes
+        from linebot_connect import register_routes
         register_routes(app)
         return app
     except Exception as e:

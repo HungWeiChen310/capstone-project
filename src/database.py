@@ -3,6 +3,7 @@ import os
 import pyodbc
 from config import Config
 
+
 logger = logging.getLogger(__name__)
 
 
@@ -11,7 +12,6 @@ class Database:
 
     def __init__(self, server=None, database=None):
         """初始化資料庫連線"""
-        # 修改回從 Config 讀取預設值
         resolved_server = server if server is not None else Config.DB_SERVER
         resolved_database = database if database is not None else Config.DB_NAME
         self.connection_string = (
@@ -27,265 +27,235 @@ class Database:
         return pyodbc.connect(self.connection_string)
 
     def _initialize_db(self):
-        """如果資料表尚未存在，則建立必要的表格"""
+        """
+        如果資料表尚未存在，則建立必要的表格。
+        此版本已加上主鍵與外鍵約束以確保資料完整性。
+        """
         try:
             with self._get_connection() as conn:
                 init_cur = conn.cursor()
 
-                # --- 1. 建立無依賴的基礎資料表 ---
+            # 1. user_preferences
+                user_preferences_cols = """
+                    [user_id] NVARCHAR(255) NOT NULL PRIMARY KEY,
+                    [language] VARCHAR(50) NULL,
+                    [role] NVARCHAR(50) NULL,
+                    [is_admin] BIT NULL,
+                    [responsible_area] NVARCHAR(255) NULL,
+                    [created_at] datetime2(2) NULL,
+                    [display_name] NVARCHAR(255) NULL,
+                    [email] NVARCHAR(255) NULL UNIQUE,
+                    [last_active] datetime2(2) NULL
+                """
+                self._create_table_if_not_exists(init_cur, "user_preferences", user_preferences_cols)
 
-                # 建立使用者偏好表 (被 conversations 和 user_equipment_subscriptions 參考)
-                init_cur.execute("""
-                    IF NOT EXISTS (
-                        SELECT * FROM sys.tables WHERE name = 'user_preferences'
-                    )
-                    CREATE TABLE user_preferences (
-                        user_id NVARCHAR(255) PRIMARY KEY,
-                        language NVARCHAR(10) DEFAULT N'zh-Hant',
-                        last_active DATETIME2 DEFAULT GETDATE(),
-                        is_admin BIT DEFAULT 0,
-                        responsible_area NVARCHAR(255),
-                        role NVARCHAR(50) DEFAULT N'user'
-                    );
-                """)
+                # 2. equipment
+                equipment_cols = """
+                    [equipment_id] NVARCHAR(255) NOT NULL PRIMARY KEY,
+                    [name] NVARCHAR(255) NOT NULL,
+                    [equipment_type] NVARCHAR(255) NULL,
+                    [location] NVARCHAR(255) NULL,
+                    [status] NVARCHAR(255) NULL,
+                    [last_updated] datetime2(2) NULL
+                """
+                self._create_table_if_not_exists(init_cur, "equipment", equipment_cols)
 
-                # 建立設備表 (被多個資料表參考)
-                init_cur.execute("""
-                    IF NOT EXISTS (
-                        SELECT * FROM sys.tables WHERE name = 'equipment'
-                    )
-                    CREATE TABLE equipment (
-                        id INT IDENTITY(1,1) PRIMARY KEY,
-                        equipment_id NVARCHAR(255) NOT NULL UNIQUE,
-                        name NVARCHAR(255) NOT NULL,
-                        type NVARCHAR(255) NOT NULL,
-                        location NVARCHAR(255),
-                        status NVARCHAR(255) DEFAULT N'normal',
-                        last_updated DATETIME2 DEFAULT GETDATE()
-                    );
-                """)
+                # 3. conversations
+                conversations_cols = """
+                    [message_id] NVARCHAR(255) NOT NULL PRIMARY KEY,
+                    [sender_id] NVARCHAR(255) NOT NULL FOREIGN KEY REFERENCES user_preferences(user_id),
+                    [receiver_id] NVARCHAR(255) NULL,
+                    [sender_role] NVARCHAR(50) NULL,
+                    [content] NVARCHAR(MAX) NOT NULL,
+                    [timestamp] datetime2(2) NULL DEFAULT GETDATE()
+                """
+                self._create_table_if_not_exists(init_cur, "conversations", conversations_cols)
 
-                # --- 2. 建立依賴基礎資料表的從屬資料表 ---
+                # 4. user_equipment_subscriptions
+                user_equipment_subscriptions_cols = """
+                    [subscription_id] INT NOT NULL PRIMARY KEY,
+                    [user_id] NVARCHAR(255) NOT NULL,
+                    [notification_level] NVARCHAR(50) NULL,
+                    [subscribed_at] datetime2(2) NULL DEFAULT GETDATE(),
+                    [equipment_id] NVARCHAR(255) NOT NULL FOREIGN KEY REFERENCES equipment(equipment_id),
+                    CONSTRAINT FK_subscriptions_user FOREIGN KEY (user_id) REFERENCES user_preferences(user_id),
+                    CONSTRAINT FK_subscriptions_equipment FOREIGN KEY (equipment_id) REFERENCES equipment(equipment_id),
+                    CONSTRAINT UQ_user_equipment UNIQUE(user_id, equipment_id)
+                """
+                self._create_table_if_not_exists(
+                    init_cur,
+                    "user_equipment_subscriptions",
+                    user_equipment_subscriptions_cols
+                )
 
-                # 建立對話記錄表 (依賴 user_preferences)
-                init_cur.execute("""
-                    IF NOT EXISTS (
-                        SELECT * FROM sys.tables WHERE name = 'conversations'
-                    )
-                    CREATE TABLE conversations (
-                        id INT IDENTITY(1,1) PRIMARY KEY,
-                        sender_id NVARCHAR(255) NOT NULL,
-                        receiver_id NVARCHAR(255) NOT NULL,
-                        sender_role NVARCHAR(50) NOT NULL,
-                        content NVARCHAR(MAX) NOT NULL,
-                        timestamp DATETIME2 DEFAULT GETDATE(),
-                        FOREIGN KEY (sender_id) REFERENCES user_preferences(user_id),
-                        FOREIGN KEY (receiver_id) REFERENCES user_preferences(user_id)
-                    );
-                """)
+                # 5. alert_history
+                alert_history_cols = """
+                    [error_id] INT NOT NULL PRIMARY KEY,
+                    [equipment_id] NVARCHAR(255) NOT NULL FOREIGN KEY REFERENCES equipment(equipment_id),
+                    [alert_type] NVARCHAR(255) NULL,
+                    [severity] NVARCHAR(255) NULL,
+                    [message] NVARCHAR(MAX) NULL,
+                    [is_resolved] BIT NULL DEFAULT 0,
+                    [created_at] datetime2(2) NULL,
+                    [resolved_at] datetime2(2) NULL,
+                    [resolved_by] NVARCHAR(255) NULL,
+                    [resolution_notes] NVARCHAR(MAX) NULL
+                """
+                self._create_table_if_not_exists(init_cur, "alert_history", alert_history_cols)
 
-                # 建立異常紀錄表 (依賴 equipment)
-                init_cur.execute("""
-                    IF NOT EXISTS (
-                        SELECT * FROM sys.tables WHERE name = 'abnormal_logs'
-                    )
-                    CREATE TABLE abnormal_logs (
-                        id INT IDENTITY(1,1) PRIMARY KEY,
-                        event_date DATETIME2 NOT NULL,
-                        equipment_id NVARCHAR(255) NOT NULL,
-                        deformation_mm FLOAT,
-                        rpm INT,
-                        event_time TIME,
-                        abnormal_type NVARCHAR(255),
-                        downtime INT,
-                        recovered_time TIME,
-                        notes NVARCHAR(MAX),
-                        FOREIGN KEY (equipment_id) REFERENCES equipment(equipment_id)
-                    );
-                """)
+                # 6. equipment_metrics
+                equipment_metrics_cols = """
+                    [id] INT NOT NULL PRIMARY KEY,
+                    [equipment_id] NVARCHAR(255) NOT NULL FOREIGN KEY REFERENCES equipment(equipment_id),
+                    [metric_type] NVARCHAR(255) NOT NULL,
+                    [status] NVARCHAR(50) NULL,
+                    [value] FLOAT NULL,
+                    [threshold_min] FLOAT NULL,
+                    [threshold_max] FLOAT NULL,
+                    [unit] NVARCHAR(50) NULL,
+                    [last_updated] datetime2(2) NULL DEFAULT GETDATE()
+                """
+                self._create_table_if_not_exists(init_cur, "equipment_metrics", equipment_metrics_cols)
 
-                # 建立警報記錄表 (依賴 equipment)
-                init_cur.execute("""
-                    IF NOT EXISTS (
-                        SELECT * FROM sys.tables WHERE name = 'alert_history'
-                    )
-                    CREATE TABLE alert_history (
-                        id INT IDENTITY(1,1) PRIMARY KEY,
-                        equipment_id NVARCHAR(255) NOT NULL,
-                        alert_type NVARCHAR(255) NOT NULL,
-                        severity NVARCHAR(255) NOT NULL,
-                        message NVARCHAR(MAX) NOT NULL,
-                        is_resolved BIT DEFAULT 0,
-                        created_at DATETIME2 DEFAULT GETDATE(),
-                        resolved_at DATETIME2,
-                        resolved_by NVARCHAR(255),
-                        resolution_notes NVARCHAR(MAX),
-                        FOREIGN KEY (equipment_id) REFERENCES equipment(equipment_id)
-                    );
-                """)
+                # 7. equipment_metric_thresholds
+                # --- 關鍵修正 2: 新增了 normal_value 欄位 ---
+                equipment_metric_thresholds_cols = """
+                    [metric_type] NVARCHAR(50) NOT NULL PRIMARY KEY,
+                    [normal_value] FLOAT NULL,
+                    [warning_min] FLOAT NULL,
+                    [warning_max] FLOAT NULL,
+                    [critical_min] FLOAT NULL,
+                    [critical_max] FLOAT NULL,
+                    [emergency_op] NVARCHAR(10) NULL,
+                    [emergency_min] FLOAT NULL,
+                    [emergency_max] FLOAT NULL,
+                """
+                self._create_table_if_not_exists(
+                    init_cur,
+                    "equipment_metric_thresholds",
+                    equipment_metric_thresholds_cols
+                )
 
-                # 使用者訂閱設備表 (邏輯上依賴 user_preferences 和 equipment)
-                init_cur.execute("""
-                    IF NOT EXISTS (
-                        SELECT * FROM sys.tables
-                        WHERE name = 'user_equipment_subscriptions'
-                    )
-                    CREATE TABLE user_equipment_subscriptions (
-                        id INT IDENTITY(1,1) PRIMARY KEY,
-                        user_id NVARCHAR(255) NOT NULL,
-                        equipment_id NVARCHAR(255) NOT NULL,
-                        notification_level NVARCHAR(255) DEFAULT N'all',
-                        subscribed_at DATETIME2 DEFAULT GETDATE(),
-                        CONSTRAINT UQ_user_equipment UNIQUE(user_id, equipment_id),
-                        FOREIGN KEY (user_id) REFERENCES user_preferences(user_id),
-                        FOREIGN KEY (equipment_id) REFERENCES equipment(equipment_id)
-                    );
-                """)
+                # 8. error_logs
+                error_logs_cols = """
+                    [error_id] INT NOT NULL PRIMARY KEY,
+                    [log_date] DATE NULL,
+                    [equipment_id] NVARCHAR(255) NOT NULL FOREIGN KEY REFERENCES equipment(equipment_id),
+                    [deformation_mm] FLOAT NULL,
+                    [rpm] INT NULL,
+                    [event_time] datetime2(2) NULL,
+                    [detected_anomaly_type] NVARCHAR(MAX) NULL,
+                    [downtime_min] INT NULL,
+                    [resolved_at] datetime2(2) NULL,
+                    [resolution_notes] NVARCHAR(MAX) NULL
+                """
+                self._create_table_if_not_exists(init_cur, "error_logs", error_logs_cols)
 
-                # 建立設備指標表 (依賴 equipment)
-                init_cur.execute("""
-                    IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'equipment_metrics')
-                    CREATE TABLE equipment_metrics (
-                        id INT IDENTITY(1,1) PRIMARY KEY,
-                        equipment_id NVARCHAR(255) NOT NULL,
-                        metric_type NVARCHAR(100) NOT NULL,
-                        value FLOAT NOT NULL,
-                        threshold_min FLOAT,
-                        threshold_max FLOAT,
-                        unit NVARCHAR(50),
-                        timestamp DATETIME2 DEFAULT GETDATE(),
-                        FOREIGN KEY (equipment_id) REFERENCES equipment(equipment_id)
-                    );
-                """)
+                # 9. stats_abnormal_monthly
+                stats_abnormal_monthly_cols = """
+                    [equipment_id] NVARCHAR(255) NOT NULL FOREIGN KEY REFERENCES equipment(equipment_id),
+                    [year] INT NOT NULL,
+                    [month] INT NOT NULL,
+                    [detected_anomaly_type] NVARCHAR(255) NOT NULL,
+                    [downtime_hrs] FLOAT NULL,
+                    [downtime_rate_percent] NVARCHAR(255) NULL,
+                    [description] NVARCHAR(MAX) NULL,
+                    PRIMARY KEY (equipment_id, year, month, detected_anomaly_type)
+                """
+                self._create_table_if_not_exists(init_cur, "stats_abnormal_monthly", stats_abnormal_monthly_cols)
 
-                # 建立設備運作記錄表 (依賴 equipment)
-                init_cur.execute("""
-                    IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'equipment_operation_logs')
-                    CREATE TABLE equipment_operation_logs (
-                        id INT IDENTITY(1,1) PRIMARY KEY,
-                        equipment_id NVARCHAR(255) NOT NULL,
-                        operation_type NVARCHAR(100) NOT NULL,
-                        start_time DATETIME2 NOT NULL,
-                        end_time DATETIME2,
-                        lot_id NVARCHAR(100),
-                        product_id NVARCHAR(100),
-                        FOREIGN KEY (equipment_id) REFERENCES equipment(equipment_id)
-                    );
-                """)
+                # 10. stats_abnormal_quarterly
+                stats_abnormal_quarterly_cols = """
+                    [equipment_id] NVARCHAR(255) NOT NULL FOREIGN KEY REFERENCES equipment(equipment_id),
+                    [year] INT NOT NULL,
+                    [quarter] INT NOT NULL,
+                    [detected_anomaly_type] NVARCHAR(255) NOT NULL,
+                    [downtime_hrs] FLOAT NULL,
+                    [downtime_rate_percent] NVARCHAR(255) NULL,
+                    [description] NVARCHAR(MAX) NULL,
+                    PRIMARY KEY (equipment_id, year, quarter, detected_anomaly_type)
+                """
+                self._create_table_if_not_exists(init_cur, "stats_abnormal_quarterly", stats_abnormal_quarterly_cols)
 
-                # --- 3. 建立統計相關資料表 (皆依賴 equipment) ---
+                # 11. stats_abnormal_yearly
+                stats_abnormal_yearly_cols = """
+                    [equipment_id] NVARCHAR(255) NOT NULL FOREIGN KEY REFERENCES equipment(equipment_id),
+                    [year] INT NOT NULL,
+                    [detected_anomaly_type] NVARCHAR(255) NOT NULL,
+                    [downtime_hrs] FLOAT NULL,
+                    [downtime_rate_percent] NVARCHAR(255) NULL,
+                    [description] NVARCHAR(MAX) NULL,
+                    PRIMARY KEY (equipment_id, year, detected_anomaly_type)
+                """
+                self._create_table_if_not_exists(init_cur, "stats_abnormal_yearly", stats_abnormal_yearly_cols)
 
-                # 運作統計（月）
-                init_cur.execute("""
-                    IF NOT EXISTS (
-                        SELECT * FROM sys.tables WHERE name = 'operation_stats_monthly'
-                    )
-                    CREATE TABLE operation_stats_monthly (
-                        id INT IDENTITY(1,1) PRIMARY KEY,
-                        equipment_id NVARCHAR(255) NOT NULL,
-                        year INT,
-                        month INT,
-                        total_operation_time INT,
-                        total_downtime INT,
-                        downtime_rate FLOAT,
-                        description NVARCHAR(MAX),
-                        FOREIGN KEY (equipment_id) REFERENCES equipment(equipment_id)
-                    );
-                """)
+                # 12. stats_operational_monthly
+                stats_operational_monthly_cols = """
+                    [equipment_id] NVARCHAR(255) NOT NULL FOREIGN KEY REFERENCES equipment(equipment_id),
+                    [year] INT NOT NULL,
+                    [month] INT NOT NULL,
+                    [total_operation_hrs] INT NULL,
+                    [downtime_hrs] FLOAT NULL,
+                    [downtime_rate_percent] NVARCHAR(255) NULL,
+                    [description] NVARCHAR(MAX) NULL,
+                    PRIMARY KEY (equipment_id, year, month)
+                """
+                self._create_table_if_not_exists(init_cur, "stats_operational_monthly", stats_operational_monthly_cols)
 
-                # 運作統計（季）
-                init_cur.execute("""
-                    IF NOT EXISTS (
-                        SELECT * FROM sys.tables WHERE name = 'operation_stats_quarterly'
-                    )
-                    CREATE TABLE operation_stats_quarterly (
-                        id INT IDENTITY(1,1) PRIMARY KEY,
-                        equipment_id NVARCHAR(255) NOT NULL,
-                        year INT,
-                        quarter INT,
-                        total_operation_time INT,
-                        total_downtime INT,
-                        downtime_rate FLOAT,
-                        description NVARCHAR(MAX),
-                        FOREIGN KEY (equipment_id) REFERENCES equipment(equipment_id)
-                    );
-                """)
+                # 13. stats_operational_quarterly
+                stats_operational_quarterly_cols = """
+                    [equipment_id] NVARCHAR(255) NOT NULL FOREIGN KEY REFERENCES equipment(equipment_id),
+                    [year] INT NOT NULL,
+                    [quarter] INT NOT NULL,
+                    [total_operation_hrs] INT NULL,
+                    [downtime_hrs] FLOAT NULL,
+                    [downtime_rate_percent] NVARCHAR(255) NULL,
+                    [description] NVARCHAR(MAX) NULL,
+                    PRIMARY KEY (equipment_id, year, quarter)
+                """
+                self._create_table_if_not_exists(
+                    init_cur,
+                    "stats_operational_quarterly",
+                    stats_operational_quarterly_cols
+                )
 
-                # 運作統計（年）
-                init_cur.execute("""
-                    IF NOT EXISTS (
-                        SELECT * FROM sys.tables WHERE name = 'operation_stats_yearly'
-                    )
-                    CREATE TABLE operation_stats_yearly (
-                        id INT IDENTITY(1,1) PRIMARY KEY,
-                        equipment_id NVARCHAR(255) NOT NULL,
-                        year INT,
-                        total_operation_time INT,
-                        total_downtime INT,
-                        downtime_rate FLOAT,
-                        description NVARCHAR(MAX),
-                        FOREIGN KEY (equipment_id) REFERENCES equipment(equipment_id)
-                    );
-                """)
-
-                # 各異常統計（月）
-                init_cur.execute("""
-                    IF NOT EXISTS (
-                        SELECT * FROM sys.tables WHERE name = 'fault_stats_monthly'
-                    )
-                    CREATE TABLE fault_stats_monthly (
-                        id INT IDENTITY(1,1) PRIMARY KEY,
-                        equipment_id NVARCHAR(255) NOT NULL,
-                        year INT,
-                        month INT,
-                        abnormal_type NVARCHAR(255),
-                        downtime INT,
-                        downtime_rate FLOAT,
-                        description NVARCHAR(MAX),
-                        FOREIGN KEY (equipment_id) REFERENCES equipment(equipment_id)
-                    );
-                """)
-
-                # 各異常統計（季）
-                init_cur.execute("""
-                    IF NOT EXISTS (
-                        SELECT * FROM sys.tables WHERE name = 'fault_stats_quarterly'
-                    )
-                    CREATE TABLE fault_stats_quarterly (
-                        id INT IDENTITY(1,1) PRIMARY KEY,
-                        equipment_id NVARCHAR(255) NOT NULL,
-                        year INT,
-                        quarter INT,
-                        abnormal_type NVARCHAR(255),
-                        downtime INT,
-                        downtime_rate FLOAT,
-                        description NVARCHAR(MAX),
-                        FOREIGN KEY (equipment_id) REFERENCES equipment(equipment_id)
-                    );
-                """)
-
-                # 各異常統計（年）
-                init_cur.execute("""
-                    IF NOT EXISTS (
-                        SELECT * FROM sys.tables WHERE name = 'fault_stats_yearly'
-                    )
-                    CREATE TABLE fault_stats_yearly (
-                        id INT IDENTITY(1,1) PRIMARY KEY,
-                        equipment_id NVARCHAR(255) NOT NULL,
-                        year INT,
-                        abnormal_type NVARCHAR(255),
-                        downtime INT,
-                        downtime_rate FLOAT,
-                        description NVARCHAR(MAX),
-                        FOREIGN KEY (equipment_id) REFERENCES equipment(equipment_id)
-                    );
-                """)
+                # 14. stats_operational_yearly
+                stats_operational_yearly_cols = """
+                    [equipment_id] NVARCHAR(255) NOT NULL,
+                    [year] INT NOT NULL,
+                    [total_operation_hrs] INT NULL,
+                    [downtime_hrs] FLOAT NULL,
+                    [downtime_rate_percent] NVARCHAR(255) NULL,
+                    [description] NVARCHAR(MAX) NULL,
+                    PRIMARY KEY (equipment_id, year),
+                    CONSTRAINT FK_stats_op_yearly_equip FOREIGN KEY (equipment_id) REFERENCES equipment(equipment_id)
+                """
+                self._create_table_if_not_exists(init_cur, "stats_operational_yearly", stats_operational_yearly_cols)
 
                 conn.commit()
-                logger.info("資料庫初始化成功，包含所有自訂資料表")
-        except pyodbc.Error as exc:
-            logger.exception(f"資料庫初始化失敗：{exc}")
+                logger.info(
+                    "資料庫表格初始化/檢查完成 (已建立主鍵與外鍵約束)。"
+                )
+        except pyodbc.Error as e:
+            logger.exception(f"資料庫初始化期間發生 pyodbc 錯誤: {e}")
             raise
+        except Exception as ex:
+            logger.exception(f"資料庫初始化期間發生非預期錯誤: {ex}")
+            raise
+
+    def _create_table_if_not_exists(self, cursor, table_name, columns_definition):
+        """通用方法，用於檢查並建立資料表"""
+        check_table_sql = (
+            "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES "
+            "WHERE TABLE_SCHEMA = 'dbo' AND TABLE_NAME = ?;"
+        )
+        cursor.execute(check_table_sql, (table_name,))
+        if cursor.fetchone()[0] == 0:
+            create_table_sql = f"CREATE TABLE {table_name} ({columns_definition});"
+            cursor.execute(create_table_sql)
+            logger.info(f"資料表 '{table_name}' 已建立。")
+        else:
+            logger.info(f"資料表 '{table_name}' 已存在，跳過建立。")
 
     def add_message(self, sender_id, receiver_id, sender_role, content):
         """加入一筆新的對話記錄（包含發送者角色）"""
@@ -300,8 +270,8 @@ class Database:
                     """,
                     (sender_id, receiver_id, sender_role, content)
                 )
-                conn.commit()
-                return True
+            conn.commit()
+            return True
         except pyodbc.Error as e:
             logger.exception(f"新增對話記錄失敗: {e}")
             return False
@@ -346,7 +316,7 @@ class Database:
                 conv_stats_cur.execute(
                     "SELECT COUNT(DISTINCT sender_id) FROM conversations;"
                 )
-                unique_senders = conv_stats_cur.fetchone()[0]  # 這裡的 sender_id 應該是指 user_id
+                unique_senders = conv_stats_cur.fetchone()[0]
                 conv_stats_cur.execute(
                     """
                     SELECT COUNT(*) FROM conversations
@@ -355,16 +325,16 @@ class Database:
                 )
                 last_24h = conv_stats_cur.fetchone()[0]
                 conv_stats_cur.execute(
-                    "SELECT sender_role, COUNT(*) FROM conversations GROUP BY sender_role;"
+                    "SELECT sender_role, COUNT(*) FROM conversations "
+                    "GROUP BY sender_role;"
                 )
                 role_counts = dict(conv_stats_cur.fetchall())
                 return {
                     "total_messages": total_messages,
-                    "unique_users": unique_senders,  # 改名為 unique_users 更清晰
+                    "unique_users": unique_senders,
                     "last_24h": last_24h,
                     "user_messages": role_counts.get("user", 0),
                     "assistant_messages": role_counts.get("assistant", 0),
-                    # 如果您有 system role 的訊息
                     "system_messages": role_counts.get("system", 0),
                     "other_messages": sum(
                         count for role, count in role_counts.items()
@@ -429,7 +399,6 @@ class Database:
             logger.exception(f"取得最近對話失敗: {e}")
             return []
 
-    # 加回 set_user_preference 方法
     def set_user_preference(self, user_id, language=None, role=None):
         """設定或更新使用者偏好與角色"""
         try:
@@ -455,8 +424,8 @@ class Database:
                     # 如果沒有要更新的欄位，至少更新 last_active
                     if not update_parts:
                         user_pref_set_cur.execute(
-                            "UPDATE user_preferences SET last_active = GETDATE() "
-                            "WHERE user_id = ?;",
+                            "UPDATE user_preferences SET last_active = GETDATE()"
+                            " WHERE user_id = ?;",
                             (user_id,)
                         )
                     else:
@@ -472,7 +441,8 @@ class Database:
                     user_pref_set_cur.execute(
                         """
                         INSERT INTO user_preferences
-                            (user_id, language, role, last_active, is_admin, responsible_area)
+                            (user_id, language, role, last_active,
+                             is_admin, responsible_area)
                         VALUES (?, ?, ?, GETDATE(), 0, NULL);
                         """,
                         (user_id, language or "zh-Hant", role or "user")
@@ -503,7 +473,10 @@ class Database:
                         "responsible_area": result[3]
                     }
                 # 如果未找到則創建預設偏好
-                logger.info(f"User {user_id} not found in preferences, creating with defaults.")
+                logger.info(
+                    f"User {user_id} not found in preferences, "
+                    "creating with defaults."
+                )
                 self.set_user_preference(user_id)  # 這會創建預設的 user, zh-Hant
                 return {
                     "language": "zh-Hant",
