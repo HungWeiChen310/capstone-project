@@ -8,7 +8,7 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 # 導入自訂模組
 from config import Config
 from equipment_scheduler import start_scheduler
-from .initial_data import import_data_from_excel
+from initial_data import import_data_from_excel
 # 設定日誌
 logger = logging.getLogger(__name__)
 

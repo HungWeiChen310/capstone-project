@@ -28,8 +28,9 @@ TABLE_CONFIGS = [
     {
         "excel_sheet_name": "equipment",
         "sql_table_name": "equipment",
-        "sql_columns": ["equipment_id", "name", "equipment_type", "location", "status", "last_updated"],
+        "sql_columns": ["id", "equipment_id", "name", "equipment_type", "location", "status", "last_updated"],
         "transform_row_data": lambda row: (
+            row.get('id'),
             row.get('equipment_id'),
             row.get('name'),
             row.get('equipment_type'),
@@ -42,17 +43,17 @@ TABLE_CONFIGS = [
         "excel_sheet_name": "alert_history",
         "sql_table_name": "alert_history",
         "sql_columns": ["error_id", "equipment_id", "alert_type", "severity", "message",
-                        "is_resolved", "created_at", "resolved_at",
+                        "is_resolved", "created_time", "resolved_time",
                         "resolved_by", "resolution_notes"],
         "transform_row_data": lambda row: (
             row.get('error_id'),
             row.get('equipment_id'),
             row.get('alert_type'),
             row.get('severity'),
-            str(row.get('訊息')) if pd.notna(row.get('訊息')) else None,
+            str(row.get('message')) if pd.notna(row.get('message')) else None,
             row.get('is_resolved'),
-            pd.to_datetime(row.get('created_at')) if pd.notna(row.get('created_at')) else None,
-            pd.to_datetime(row.get('resolved_at')) if pd.notna(row.get('resolved_at')) else None,
+            pd.to_datetime(row.get('created_time')) if pd.notna(row.get('created_time')) else None,
+            pd.to_datetime(row.get('resolved_time')) if pd.notna(row.get('resolved_time')) else None,
             str(row.get('resolved_by')) if pd.notna(row.get('resolved_by')) else None,
             str(row.get('resolution_notes')) if pd.notna(row.get('resolution_notes')) else None
         )
@@ -61,25 +62,25 @@ TABLE_CONFIGS = [
         "excel_sheet_name": "equipment_metrics",
         "sql_table_name": "equipment_metrics",
         "sql_columns": ["id", "equipment_id", "metric_type", "status",
-                        "value", "threshold_min", "threshold_max", "unit", "timestamp"],
+                        "value", "threshold_min", "threshold_max", "unit", "last_updated"],
         "transform_row_data": lambda row: (
             row.get('id'),
             row.get('equipment_id'),
             row.get('metric_type'),
-            str(row.get('狀態')) if pd.notna(row.get('狀態')) else None,
+            str(row.get('status')) if pd.notna(row.get('status')) else None,
             row.get('value'),
             row.get('threshold_min'),
             row.get('threshold_max'),
             str(row.get('unit')) if pd.notna(row.get('unit')) else None,
-            pd.to_datetime(row.get('timestamp')) if pd.notna(row.get('timestamp')) else None
+            pd.to_datetime(row.get('last_updated')) if pd.notna(row.get('last_updated')) else None
         )
     },
     {
-        "excel_sheet_name": "設備標準值",
+        "excel_sheet_name": "equipment_metric_thresholds",
         "sql_table_name": "equipment_metric_thresholds",
         "sql_columns": ["metric_type", "normal_value", "warning_min", "warning_max",
                         "critical_min", "critical_max", "emergency_op", "emergency_min",
-                        "emergency_max"],
+                        "emergency_max", "last_updated"],
         "transform_row_data": lambda row: (
             str(row.get('metric_type')) if pd.notna(row.get('metric_type')) else None,
             float(row.get('normal_value')) if pd.notna(row.get('normal_value')) else None,
@@ -90,108 +91,112 @@ TABLE_CONFIGS = [
             str(row.get('emergency_op')) if pd.notna(row.get('emergency_op')) else None,  # emergency_op 可能是 ">" 或 "<"
             float(row.get('emergency_min')) if pd.notna(row.get('emergency_min')) else None,
             float(row.get('emergency_max')) if pd.notna(row.get('emergency_max')) else None,
+            pd.to_datetime(row.get('last_updated')) if pd.notna(row.get('last_updated')) else None
         )
     },
     {
-        "excel_sheet_name": "異常紀錄",
+        "excel_sheet_name": "error_logs",
         "sql_table_name": "error_logs",
-        "sql_columns": ["error_id", "log_date", "equipment_id",
+        "sql_columns": ["log_date", "error_id", "equipment_id",
                         "deformation_mm", "rpm", "event_time",
                         "detected_anomaly_type", "downtime_min",
-                        "resolved_at", "resolution_notes"],
+                        "resolved_time", "notes"],
         "transform_row_data": lambda row: (
+            pd.to_datetime(str(row.get('log_date'))) if pd.notna(row.get('log_date')) else None,
             int(row.get('error_id')),
-            pd.to_datetime(str(row.get('日期'))) if pd.notna(row.get('日期')) else None,
             str(row.get('equipment_id')),
-            float(row.get('變形量(mm)')) if pd.notna(row.get('變形量(mm)')) else None,
-            float(row.get('轉速')) if pd.notna(row.get('轉速')) else None,
-            pd.to_datetime(str(row.get('時間'))) if pd.notna(row.get('時間')) else None,
-            str(row.get('偵測異常類型')),
-            int(row.get('停機時長(分鐘)')) if pd.notna(row.get('停機時長(分鐘)')) else None,
-            pd.to_datetime(str(row.get('回復時間'))) if pd.notna(row.get('回復時間')) else None,
-            str(row.get('備註')) if pd.notna(row.get('備註')) else None
+            float(row.get('deformation(mm)')) if pd.notna(row.get('deformation(mm)')) else None,
+            float(row.get('rpm')) if pd.notna(row.get('rpm')) else None,
+            pd.to_datetime(str(row.get('event_time'))) if pd.notna(row.get('event_time')) else None,
+            str(row.get('detected_anomaly_type')),
+            int(row.get('downtime_min')) if pd.notna(row.get('downtime_min')) else None,
+            pd.to_datetime(str(row.get('resolved_time'))) if pd.notna(row.get('resolved_time')) else None,
+            str(row.get('notes'))
         )
     },
     {
-        "excel_sheet_name": "運作統計(月)",
+        "excel_sheet_name": "stats_operational_monthly",
         "sql_table_name": "stats_operational_monthly",
         "sql_columns": ["equipment_id", "year", "month",
                         "total_operation_hrs", "downtime_hrs",
-                        "downtime_rate_percent", "description"],
+                        "downtime_rate_percent", "notes"],
         "transform_row_data": lambda row: (
-            str(row.get('equipment_id')), row.get('年'), row.get('月'),
-            int(row.get('總運作時長')),
-            float(row.get('停機總時長')) if pd.notna(row.get('停機總時長')) else None,
-            str(row.get('停機率(%)')) if pd.notna(row.get('停機率(%)')) else None,
-            str(row.get('說明')) if pd.notna(row.get('說明')) else None
+            str(row.get('equipment_id')), row.get('year'), row.get('month'),
+            int(row.get('total_operation_hrs')),
+            float(row.get('downtime_hrs')) if pd.notna(row.get('downtime_hrs')) else None,
+            str(row.get('downtime_rate_percent')) if pd.notna(row.get('downtime_rate_percent')) else None,
+            str(row.get('notes'))
         )
     },
     {
-        "excel_sheet_name": "運作統計(季)",
+        "excel_sheet_name": "stats_operational_quarterly",
         "sql_table_name": "stats_operational_quarterly",
         "sql_columns": ["equipment_id", "year", "quarter",
                         "total_operation_hrs", "downtime_hrs",
-                        "downtime_rate_percent", "description"],
+                        "downtime_rate_percent", "notes"],
         "transform_row_data": lambda row: (
-            str(row.get('equipment_id')), row.get('年'), row.get('季度'),
-            int(row.get('總運作時長')) if pd.notna(row.get('總運作時長')) else None,
-            float(row.get('停機總時長')) if pd.notna(row.get('停機總時長')) else None,
-            str(row.get('停機率(%)')) if pd.notna(row.get('停機率(%)')) else None,
-            str(row.get('說明')) if pd.notna(row.get('說明')) else None
+            str(row.get('equipment_id')), row.get('year'), row.get('quarter'),
+            int(row.get('total_operation_hrs')) if pd.notna(row.get('total_operation_hrs')) else None,
+            float(row.get('downtime_hrs')) if pd.notna(row.get('downtime_hrs')) else None,
+            str(row.get('downtime_rate_percent')) if pd.notna(row.get('downtime_rate_percent')) else None,
+            str(row.get('notes'))
         )
     },
     {
-        "excel_sheet_name": "運作統計(年)",
+        "excel_sheet_name": "stats_operational_yearly",
         "sql_table_name": "stats_operational_yearly",
         "sql_columns": ["equipment_id", "year", "total_operation_hrs",
                         "downtime_hrs", "downtime_rate_percent",
-                        "description"],
+                        "notes"],
         "transform_row_data": lambda row: (
-            str(row.get('equipment_id')), row.get('年'),
-            int(row.get('總運作時長')) if pd.notna(row.get('總運作時長')) else None,
-            float(row.get('停機總時長')) if pd.notna(row.get('停機總時長')) else None,
-            str(row.get('停機率(%)')) if pd.notna(row.get('停機率(%)')) else None,
-            str(row.get('說明')) if pd.notna(row.get('說明')) else None
+            str(row.get('equipment_id')), row.get('year'),
+            int(row.get('total_operation_hrs')) if pd.notna(row.get('total_operation_hrs')) else None,
+            float(row.get('downtime_hrs')) if pd.notna(row.get('downtime_hrs')) else None,
+            str(row.get('downtime_rate_percent')) if pd.notna(row.get('downtime_rate_percent')) else None,
+            str(row.get('notes'))
         )
     },
     {
-        "excel_sheet_name": "各異常統計(月)",
+        "excel_sheet_name": "stats_abnormal_monthly",
         "sql_table_name": "stats_abnormal_monthly",
         "sql_columns": ["equipment_id", "year", "month",
-                        "detected_anomaly_type", "downtime_hrs",
-                        "downtime_rate_percent", "description"],
+                        "detected_anomaly_type", "total_operation_hrs", "downtime_hrs",
+                        "downtime_rate_percent", "notes"],
         "transform_row_data": lambda row: (
-            str(row.get('equipment_id')), int(row.get('年')), int(row.get('月')),
-            str(row.get('偵測異常類型')) if pd.notna(row.get('偵測異常類型')) else None,
-            float(row.get('停機時長')) if pd.notna(row.get('停機時長')) else None,
-            float(row.get('停機率(%)')) if pd.notna(row.get('停機率(%)')) else None,
-            str(row.get('說明')) if pd.notna(row.get('說明')) else None
+            str(row.get('equipment_id')), int(row.get('year')), int(row.get('month')),
+            str(row.get('detected_anomaly_type')) if pd.notna(row.get('detected_anomaly_type')) else None,
+            int(row.get('total_operation_hrs')) if pd.notna(row.get('total_operation_hrs')) else None,
+            float(row.get('downtime_hrs')) if pd.notna(row.get('downtime_hrs')) else None,
+            float(row.get('downtime_rate_percent')) if pd.notna(row.get('downtime_rate_percent')) else None,
+            str(row.get('notes'))
         )
     },
     {
-        "excel_sheet_name": "各異常統計(季)",
+        "excel_sheet_name": "stats_abnormal_quarterly",
         "sql_table_name": "stats_abnormal_quarterly",
         "sql_columns": ["equipment_id", "year", "quarter",
-                        "detected_anomaly_type", "downtime_hrs",
-                        "downtime_rate_percent", "description"],
+                        "detected_anomaly_type", "total_operation_hrs", "downtime_hrs",
+                        "downtime_rate_percent", "notes"],
         "transform_row_data": lambda row: (
-            str(row.get('equipment_id')), row.get('年'), row.get('季度'),
-            str(row.get('偵測異常類型')),
-            float(row.get('停機時長')), str(row.get('停機率(%)')),
-            str(row.get('說明'))
+            str(row.get('equipment_id')), row.get('year'), row.get('quarter'),
+            str(row.get('detected_anomaly_type')),
+            int(row.get('total_operation_hrs')) if pd.notna(row.get('total_operation_hrs')) else None,
+            float(row.get('downtime_hrs')), str(row.get('downtime_rate_percent')),
+            str(row.get('notes'))
         )
     },
     {
-        "excel_sheet_name": "各異常統計(年)",
+        "excel_sheet_name": "stats_abnormal_yearly",
         "sql_table_name": "stats_abnormal_yearly",
         "sql_columns": ["equipment_id", "year", "detected_anomaly_type",
-                        "downtime_hrs", "downtime_rate_percent",
-                        "description"],
+                        "total_operation_hrs", "downtime_hrs", "downtime_rate_percent",
+                        "notes"],
         "transform_row_data": lambda row: (
-            str(row.get('equipment_id')), row.get('年'),
-            str(row.get('偵測異常類型')),
-            float(row.get('停機時長')), str(row.get('停機率(%)')),
-            str(row.get('說明'))
+            str(row.get('equipment_id')), row.get('year'),
+            str(row.get('detected_anomaly_type')),
+            int(row.get('total_operation_hrs')) if pd.notna(row.get('total_operation_hrs')) else None,
+            float(row.get('downtime_hrs')), str(row.get('downtime_rate_percent')),
+            str(row.get('notes'))
         )
     }
 ]

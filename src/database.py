@@ -51,6 +51,7 @@ class Database:
 
                 # 2. equipment
                 equipment_cols = """
+                    [id] INT NULL,
                     [equipment_id] NVARCHAR(255) NOT NULL PRIMARY KEY,
                     [name] NVARCHAR(255) NOT NULL,
                     [equipment_type] NVARCHAR(255) NULL,
@@ -96,8 +97,8 @@ class Database:
                     [severity] NVARCHAR(255) NULL,
                     [message] NVARCHAR(MAX) NULL,
                     [is_resolved] BIT NULL DEFAULT 0,
-                    [created_at] datetime2(2) NULL,
-                    [resolved_at] datetime2(2) NULL,
+                    [created_time] datetime2(2) NULL,
+                    [resolved_time] datetime2(2) NULL,
                     [resolved_by] NVARCHAR(255) NULL,
                     [resolution_notes] NVARCHAR(MAX) NULL
                 """
@@ -129,6 +130,7 @@ class Database:
                     [emergency_op] NVARCHAR(10) NULL,
                     [emergency_min] FLOAT NULL,
                     [emergency_max] FLOAT NULL,
+                    [last_updated] datetime2(2) NULL DEFAULT GETDATE()
                 """
                 self._create_table_if_not_exists(
                     init_cur,
@@ -138,16 +140,16 @@ class Database:
 
                 # 8. error_logs
                 error_logs_cols = """
-                    [error_id] INT NOT NULL PRIMARY KEY,
                     [log_date] DATE NULL,
+                    [error_id] INT NOT NULL PRIMARY KEY,
                     [equipment_id] NVARCHAR(255) NOT NULL FOREIGN KEY REFERENCES equipment(equipment_id),
                     [deformation_mm] FLOAT NULL,
                     [rpm] INT NULL,
                     [event_time] datetime2(2) NULL,
                     [detected_anomaly_type] NVARCHAR(MAX) NULL,
                     [downtime_min] INT NULL,
-                    [resolved_at] datetime2(2) NULL,
-                    [resolution_notes] NVARCHAR(MAX) NULL
+                    [resolved_time] datetime2(2) NULL,
+                    [notes] NVARCHAR(MAX) NULL
                 """
                 self._create_table_if_not_exists(init_cur, "error_logs", error_logs_cols)
 
@@ -157,9 +159,10 @@ class Database:
                     [year] INT NOT NULL,
                     [month] INT NOT NULL,
                     [detected_anomaly_type] NVARCHAR(255) NOT NULL,
+                    [total_operation_hrs] INT NULL,
                     [downtime_hrs] FLOAT NULL,
                     [downtime_rate_percent] NVARCHAR(255) NULL,
-                    [description] NVARCHAR(MAX) NULL,
+                    [notes] NVARCHAR(MAX) NULL,
                     PRIMARY KEY (equipment_id, year, month, detected_anomaly_type)
                 """
                 self._create_table_if_not_exists(init_cur, "stats_abnormal_monthly", stats_abnormal_monthly_cols)
@@ -170,9 +173,10 @@ class Database:
                     [year] INT NOT NULL,
                     [quarter] INT NOT NULL,
                     [detected_anomaly_type] NVARCHAR(255) NOT NULL,
+                    [total_operation_hrs] INT NULL,
                     [downtime_hrs] FLOAT NULL,
                     [downtime_rate_percent] NVARCHAR(255) NULL,
-                    [description] NVARCHAR(MAX) NULL,
+                    [notes] NVARCHAR(MAX) NULL,
                     PRIMARY KEY (equipment_id, year, quarter, detected_anomaly_type)
                 """
                 self._create_table_if_not_exists(init_cur, "stats_abnormal_quarterly", stats_abnormal_quarterly_cols)
@@ -182,9 +186,10 @@ class Database:
                     [equipment_id] NVARCHAR(255) NOT NULL FOREIGN KEY REFERENCES equipment(equipment_id),
                     [year] INT NOT NULL,
                     [detected_anomaly_type] NVARCHAR(255) NOT NULL,
+                    [total_operation_hrs] INT NULL,
                     [downtime_hrs] FLOAT NULL,
                     [downtime_rate_percent] NVARCHAR(255) NULL,
-                    [description] NVARCHAR(MAX) NULL,
+                    [notes] NVARCHAR(MAX) NULL,
                     PRIMARY KEY (equipment_id, year, detected_anomaly_type)
                 """
                 self._create_table_if_not_exists(init_cur, "stats_abnormal_yearly", stats_abnormal_yearly_cols)
@@ -197,7 +202,7 @@ class Database:
                     [total_operation_hrs] INT NULL,
                     [downtime_hrs] FLOAT NULL,
                     [downtime_rate_percent] NVARCHAR(255) NULL,
-                    [description] NVARCHAR(MAX) NULL,
+                    [notes] NVARCHAR(MAX) NULL,
                     PRIMARY KEY (equipment_id, year, month)
                 """
                 self._create_table_if_not_exists(init_cur, "stats_operational_monthly", stats_operational_monthly_cols)
@@ -210,7 +215,7 @@ class Database:
                     [total_operation_hrs] INT NULL,
                     [downtime_hrs] FLOAT NULL,
                     [downtime_rate_percent] NVARCHAR(255) NULL,
-                    [description] NVARCHAR(MAX) NULL,
+                    [notes] NVARCHAR(MAX) NULL,
                     PRIMARY KEY (equipment_id, year, quarter)
                 """
                 self._create_table_if_not_exists(
@@ -226,7 +231,7 @@ class Database:
                     [total_operation_hrs] INT NULL,
                     [downtime_hrs] FLOAT NULL,
                     [downtime_rate_percent] NVARCHAR(255) NULL,
-                    [description] NVARCHAR(MAX) NULL,
+                    [notes] NVARCHAR(MAX) NULL,
                     PRIMARY KEY (equipment_id, year),
                     CONSTRAINT FK_stats_op_yearly_equip FOREIGN KEY (equipment_id) REFERENCES equipment(equipment_id)
                 """
