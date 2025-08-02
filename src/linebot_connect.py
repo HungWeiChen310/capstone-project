@@ -17,6 +17,7 @@ from flask import (
     request,
     session,
     url_for,
+    jsonify
 )
 from flask_talisman import Talisman
 from linebot.v3.exceptions import InvalidSignatureError
@@ -263,6 +264,31 @@ def register_routes(app_instance):  # 傳入 app 實例
         def now_func():
             return datetime.datetime.now()
         return dict(now=now_func)
+
+    @app_instance.route("/alarms", methods=["POST"])
+    def alarms():
+        """接收警報訊息"""
+        data = request.get_json(force=True, silent=True)
+        key = ("equipment_id", "alert_type", "severity")
+        if data and all(k in data for k in key):
+            data["created_time"] = str(
+                datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            )
+            db.insert_alert_history(log_data=data)
+            equipment_id = data["equipment_id"]
+            subscribers = db.get_subscribed_users(equipment_id)
+            if subscribers:
+                message_text = (
+                    f"設備 {equipment_id} 發生 {data['alert_type']} 警報，"
+                    f"嚴重程度 {data['severity']}"
+                )
+                for user in subscribers:
+                    send_notification(user, message_text)
+            else:
+                logger.info(f"No subscribers found for equipment {equipment_id}")
+
+        logger.info("Received JSON from client:", data)
+        return jsonify({"status": "success"}), 200
 
 
 register_routes(app)
