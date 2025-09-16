@@ -4,6 +4,7 @@ import re
 import time
 from openai import OpenAI
 from database import db
+from rag import get_default_knowledge_base
 
 
 def sanitize_input(text):
@@ -157,6 +158,12 @@ class OpenAIService:
         # 取得使用者語言偏好
         self.user_prefs = db.get_user_preference(user_id)
         self.language = self.user_prefs.get("language", "zh-Hant")
+        self.rag_enabled = os.getenv("ENABLE_RAG", "true").lower() not in {"false", "0", "no"}
+        self.rag_top_k = self._parse_int(os.getenv("RAG_TOP_K"), default=3)
+        self.rag_min_score = self._parse_float(os.getenv("RAG_MIN_SCORE"), default=0.05)
+        self.rag_max_context_chars = max(
+            200, self._parse_int(os.getenv("RAG_MAX_CONTEXT_CHARS"), default=1800)
+        )
 
     def get_fallback_response(self, error=None):
         """提供 OpenAI API 失敗時的備用回應"""
@@ -190,6 +197,18 @@ class OpenAIService:
             conversation.insert(0, {"role": "system", "content": system_prompt})
         # 添加用戶的新訊息
         user_data.add_message(self.user_id, "user", self.message)
+        conversation_snapshot = [dict(msg) for msg in conversation]
+        context_message = self._build_context_message()
+        if context_message:
+            insert_index = (
+                1
+                if conversation_snapshot and conversation_snapshot[0].get("role") == "system"
+                else 0
+            )
+            conversation_snapshot.insert(
+                insert_index,
+                {"role": "system", "content": context_message},
+            )
         try:
             max_retries = 3
             retry_count = 0
@@ -198,7 +217,7 @@ class OpenAIService:
                     # 呼叫 OpenAI API
                     response = self.client.chat.completions.create(
                         model="gpt-3.5-turbo",
-                        messages=conversation,
+                        messages=conversation_snapshot,
                         max_tokens=500,
                         timeout=10,  # 設定超時時間
                     )
@@ -223,6 +242,65 @@ class OpenAIService:
             fallback_message = self.get_fallback_response(e)
             user_data.add_message(self.user_id, "assistant", fallback_message)
             return fallback_message
+
+    def _build_context_message(self):
+        """根據使用者訊息從知識庫擷取相關內容"""
+        if not self.rag_enabled or not self.message:
+            return None
+        try:
+            knowledge_base = get_default_knowledge_base()
+        except Exception as exc:  # pylint: disable=broad-except
+            logging.exception("初始化 RAG 知識庫失敗: %s", exc)
+            return None
+        if not knowledge_base.is_ready:
+            return None
+        results = knowledge_base.search(
+            self.message,
+            top_k=self.rag_top_k,
+            min_score=self.rag_min_score,
+        )
+        if not results:
+            return None
+        formatted_sections = []
+        sources_for_log = []
+        for result in results:
+            metadata = result.document.metadata
+            source = metadata.get("source", result.document.doc_id)
+            chunk_index = metadata.get("chunk_index")
+            chunk_count = metadata.get("chunk_count")
+            if chunk_index and chunk_count:
+                display_source = f"{source} (節選 {chunk_index}/{chunk_count})"
+            elif chunk_index:
+                display_source = f"{source} (節選 {chunk_index})"
+            else:
+                display_source = source
+            sources_for_log.append(display_source)
+            formatted_sections.append(
+                f"來源：{display_source}\n內容：{result.document.content.strip()}"
+            )
+        logging.debug("RAG 擷取來源：%s", sources_for_log)
+        context = (
+            "以下為知識庫擷取的相關內容，可作為回答使用者問題的參考。"
+            "若資料不足以完整解答，請清楚說明缺少的資訊。\n\n"
+            + "\n\n".join(formatted_sections)
+        )
+        if len(context) > self.rag_max_context_chars:
+            context = context[: self.rag_max_context_chars - 3] + "..."
+        return context
+
+    @staticmethod
+    def _parse_int(value, default):
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return default
+
+    @staticmethod
+    def _parse_float(value, default):
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return default
 
 
 def reply_message(event):

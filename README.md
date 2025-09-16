@@ -3,6 +3,7 @@
 ## 主要功能
 
 - **LINE Bot 智能對話**：接收使用者訊息，利用 ChatGPT 生成專業、具實踐性的回應
+- **文件檢索增強 (RAG)**：整合本地專案文件與程式碼，透過檢索增強生成提供更準確的答案
 - **半導體設備監控**：即時監控黏晶機、打線機、切割機等設備的運作狀態，自動偵測異常並發送警報
 - **多語言支援**：支援繁體中文、簡體中文、英文、日文與韓文等多種語言
 - **事件系統**：實作輕量級事件發布/訂閱系統，解耦模組間的依賴
@@ -69,6 +70,18 @@ LINE_CHANNEL_SECRET=your_line_channel_secret
 ADMIN_USERNAME=admin_username
 ADMIN_PASSWORD=admin_password
 ```
+
+### RAG 設定
+
+系統會自動將專案中的 `README.md`、`Documentary.md`、`src/`、`templates/` 等路徑載入為知識庫。
+可依需求透過以下環境變數調整行為：
+
+- `ENABLE_RAG`：是否啟用檢索增強（預設為 `true`）
+- `RAG_SOURCE_PATHS`：自訂知識庫來源路徑，使用作業系統的路徑分隔符號分隔多個路徑
+- `RAG_CHUNK_SIZE` / `RAG_CHUNK_OVERLAP`：切分文件時的片段大小與重疊字元數
+- `RAG_TOP_K`：每次檢索返回的片段數量
+- `RAG_MIN_SCORE`：相似度門檻值（0~1 之間，建議值 0.05）
+- `RAG_MAX_CONTEXT_CHARS`：插入模型系統提示的最大字數，避免產生過長的上下文
 
 ### 安裝相依套件
 
