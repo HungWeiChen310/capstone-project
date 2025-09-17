@@ -8,8 +8,12 @@ import re
 import threading
 from collections import Counter
 from dataclasses import dataclass
+from datetime import date, datetime
+from decimal import Decimal
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Sequence
+from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+import pyodbc
+import database
 
 
 logger = logging.getLogger(__name__)
@@ -57,10 +61,11 @@ class RAGKnowledgeBase:
         chunk_overlap: int = 120,
         max_file_size: int = 512_000,
     ) -> None:
+        """Configure the knowledge base and load initial documents."""
         if chunk_size <= 0:
-            raise ValueError("chunk_size 必須為正整數")
+            raise ValueError("chunk_size must be a positive integer")
         if chunk_overlap < 0:
-            raise ValueError("chunk_overlap 不能為負數")
+            raise ValueError("chunk_overlap cannot be negative")
         if chunk_overlap >= chunk_size:
             logger.warning(
                 "chunk_overlap (%s) 大於或等於 chunk_size (%s)，將自動調整", chunk_overlap, chunk_size
@@ -84,6 +89,206 @@ class RAGKnowledgeBase:
 
         self._source_paths: Sequence[Path] = self._resolve_sources(source_paths)
         self._load_documents()
+
+    #----------------------------------------------------------------
+    # MS SQL 連線
+    #----------------------------------------------------------------
+
+    def ingest_from_mssql(
+        self,
+        db: database.Database,
+    ) -> None:
+        """Load MSSQL tables and build KnowledgeDocument entries for the knowledge base."""
+
+        if db is None:
+            raise ValueError("Database instance is required for MSSQL ingestion.")
+
+        def _format_value(value: object) -> str:
+            if value is None:
+                return ""
+            if isinstance(value, bool):
+                return "true" if value else "false"
+            if isinstance(value, (datetime, date)):
+                return value.strftime("%Y-%m-%d %H:%M:%S")
+            if isinstance(value, Decimal):
+                normalized = format(value, "f")
+                return normalized.rstrip("0").rstrip(".") if "." in normalized else normalized
+            return str(value).strip()
+
+        def _rows_to_dicts(cursor, rows) -> List[Dict[str, object]]:
+            columns = [column[0] for column in cursor.description]
+            dict_rows: List[Dict[str, object]] = []
+            for row in rows:
+                dict_rows.append({column: row[idx] for idx, column in enumerate(columns)})
+            return dict_rows
+
+        def _ingest_rows(
+            rows: List[Dict[str, object]],
+            *,
+            id_columns: Sequence[str],
+            text_columns: Sequence[str],
+            meta_columns: Sequence[str],
+            source_tag: str,
+        ) -> Tuple[List[KnowledgeDocument], List[List[str]]]:
+            new_docs: List[KnowledgeDocument] = []
+            new_tokens: List[List[str]] = []
+            for row in rows:
+                doc_id_parts = [
+                    str(row.get(column))
+                    for column in id_columns
+                    if row.get(column) not in (None, "")
+                ]
+                if not doc_id_parts:
+                    continue
+                content_lines: List[str] = []
+                for column in text_columns:
+                    raw_value = _format_value(row.get(column))
+                    if not raw_value:
+                        continue
+                    label = column.replace("_", " ").title()
+                    content_lines.append(f"{label}: {raw_value}")
+                content = "\n".join(content_lines).strip()
+                if not content:
+                    continue
+                metadata: Dict[str, str] = {
+                    "source": source_tag,
+                    "row_id": "::".join(doc_id_parts),
+                }
+                for column in meta_columns:
+                    value = _format_value(row.get(column))
+                    if value:
+                        metadata[column] = value
+                doc_id = f"{source_tag}::" + "::".join(doc_id_parts)
+                document = KnowledgeDocument(doc_id=doc_id, content=content, metadata=metadata)
+                new_docs.append(document)
+                new_tokens.append(self._tokenize(content))
+            return new_docs, new_tokens
+
+        data_sources = [
+            {
+                "table": "equipment",
+                "source_tag": "mssql:equipment",
+                "query": (
+                    "SELECT equipment_id, name, equipment_type, status, last_updated "
+                    "FROM equipment"
+                ),
+                "id_columns": ("equipment_id",),
+                "text_columns": ("name", "equipment_type", "status"),
+                "meta_columns": ("last_updated",),
+            },
+            {
+                "table": "alert_history",
+                "source_tag": "mssql:alert_history",
+                "query": (
+                    "SELECT ah.error_id, ah.equipment_id, e.name AS equipment_name, "
+                    "ah.alert_type, ah.severity, ah.is_resolved, ah.created_time, "
+                    "ah.resolved_time, ah.resolved_by, ah.resolution_notes "
+                    "FROM alert_history AS ah "
+                    "LEFT JOIN equipment AS e ON ah.equipment_id = e.equipment_id"
+                ),
+                "id_columns": ("error_id", "equipment_id"),
+                "text_columns": ("equipment_name", "alert_type", "severity", "resolution_notes"),
+                "meta_columns": ("is_resolved", "created_time", "resolved_time", "resolved_by"),
+            },
+            {
+                "table": "equipment_metrics",
+                "source_tag": "mssql:equipment_metrics",
+                "query": (
+                    "SELECT em.id, em.equipment_id, e.name AS equipment_name, "
+                    "em.metric_type, em.status, em.value, em.threshold_min, "
+                    "em.threshold_max, em.unit, em.last_updated "
+                    "FROM equipment_metrics AS em "
+                    "LEFT JOIN equipment AS e ON em.equipment_id = e.equipment_id"
+                ),
+                "id_columns": ("id",),
+                "text_columns": ("equipment_name", "metric_type", "status", "value"),
+                "meta_columns": ("threshold_min", "threshold_max", "unit", "last_updated"),
+            },
+            {
+                "table": "error_logs",
+                "source_tag": "mssql:error_logs",
+                "query": (
+                    "SELECT el.error_id, el.equipment_id, e.name AS equipment_name, "
+                    "el.detected_anomaly_type, el.notes, el.log_date, el.event_time, "
+                    "el.resolved_time, el.downtime_sec "
+                    "FROM error_logs AS el "
+                    "LEFT JOIN equipment AS e ON el.equipment_id = e.equipment_id"
+                ),
+                "id_columns": ("error_id", "equipment_id"),
+                "text_columns": ("equipment_name", "detected_anomaly_type", "notes"),
+                "meta_columns": ("log_date", "event_time", "resolved_time", "downtime_sec"),
+            },
+        ]
+
+        ingested_batches: List[Tuple[str, List[KnowledgeDocument], List[List[str]]]] = []
+
+        try:
+            with db._get_connection() as conn:
+                for source in data_sources:
+                    cursor = conn.cursor()
+                    try:
+                        cursor.execute(source["query"])
+                        rows_raw = cursor.fetchall()
+                        if not rows_raw:
+                            continue
+                        row_dicts = _rows_to_dicts(cursor, rows_raw)
+                        docs, tokens = _ingest_rows(
+                            row_dicts,
+                            id_columns=source["id_columns"],
+                            text_columns=source["text_columns"],
+                            meta_columns=source["meta_columns"],
+                            source_tag=source["source_tag"],
+                        )
+                        if docs:
+                            ingested_batches.append((source["source_tag"], docs, tokens))
+                            logger.info(
+                                "Loaded %s documents from MSSQL table '%s'.",
+                                len(docs),
+                                source["table"],
+                            )
+                    except pyodbc.Error as exc:
+                        logger.error(
+                            "Failed to ingest MSSQL table '%s': %s",
+                            source["table"],
+                            exc,
+                        )
+                    except Exception as exc:
+                        logger.exception(
+                            "Unexpected error while ingesting table '%s': %s",
+                            source["table"],
+                            exc,
+                        )
+                    finally:
+                        cursor.close()
+        except pyodbc.Error as exc:
+            logger.error("Failed to connect to MSSQL for RAG ingestion: %s", exc)
+            return
+
+        if not ingested_batches:
+            logger.info("MSSQL ingestion completed with no new documents.")
+            return
+
+        prefixes = {f"{source_tag}::" for source_tag, _, _ in ingested_batches}
+
+        with self._lock:
+            retained_docs: List[KnowledgeDocument] = []
+            retained_tokens: List[List[str]] = []
+            for doc, tokens in zip(self._documents, self._doc_tokens):
+                if any(doc.doc_id.startswith(prefix) for prefix in prefixes):
+                    continue
+                retained_docs.append(doc)
+                retained_tokens.append(tokens)
+
+            for _, docs, tokens in ingested_batches:
+                retained_docs.extend(docs)
+                retained_tokens.extend(tokens)
+
+            self._documents = retained_docs
+            self._doc_tokens = retained_tokens
+            self._rebuild_index()
+
+        total_docs = sum(len(docs) for _, docs, _ in ingested_batches)
+        logger.info("MSSQL ingestion added %s documents to the knowledge base.", total_docs)
 
     # ------------------------------------------------------------------
     # Public API
