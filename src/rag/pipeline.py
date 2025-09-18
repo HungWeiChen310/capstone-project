@@ -2,13 +2,10 @@
 
 from __future__ import annotations
 
-import logging
 import os
 from typing import Callable, Dict, Iterable, List, Optional
 
 from .sql_retriever import SQLRetriever
-
-logger = logging.getLogger(__name__)
 
 ContextHeaderFactory = Callable[[Optional[str], int], str]
 DocumentFormatter = Callable[[Dict[str, object], int], str]
@@ -68,7 +65,12 @@ class RAGPipeline:
             return f"{header}\n{body}"
         return body
 
-    def build_context_message(self, query: str, *, language: Optional[str] = None) -> Optional[Dict[str, str]]:
+    def build_context_message(
+        self,
+        query: str,
+        *,
+        language: Optional[str] = None,
+    ) -> Optional[Dict[str, str]]:
         """Create a system message containing contextual knowledge."""
 
         content = self.build_context(query, language=language)
@@ -88,7 +90,10 @@ class RAGPipeline:
         base_messages = [dict(message) for message in messages] if messages else []
         context_message = self.build_context_message(query, language=language)
         if context_message:
-            insert_index = 1 if base_messages and base_messages[0].get("role") == "system" else 0
+            starts_with_system = (
+                base_messages and base_messages[0].get("role") == "system"
+            )
+            insert_index = 1 if starts_with_system else 0
             base_messages.insert(insert_index, context_message)
         return base_messages
 
@@ -96,7 +101,11 @@ class RAGPipeline:
     # Default formatting helpers
     # ------------------------------------------------------------------
 
-    def _default_document_formatter(self, document: Dict[str, object], index: int) -> str:
+    def _default_document_formatter(
+        self,
+        document: Dict[str, object],
+        index: int,
+    ) -> str:
         title = str(document.get("title") or f"Document {index}")
         content = self._prepare_snippet(document.get("content"))
         metadata_parts: List[str] = []
@@ -122,7 +131,13 @@ class RAGPipeline:
         return f"{truncated}..."
 
 
-def _parse_int(value: Optional[str], default: int, *, minimum: int, maximum: int) -> int:
+def _parse_int(
+    value: Optional[str],
+    default: int,
+    *,
+    minimum: int,
+    maximum: int,
+) -> int:
     try:
         parsed = int(value) if value is not None else default
     except (TypeError, ValueError):
@@ -135,9 +150,18 @@ def build_default_pipeline(db_instance=None) -> RAGPipeline:
 
     table_name = os.getenv("SQL_RAG_TABLE", "knowledge_documents")
     search_fields_env = os.getenv("SQL_RAG_SEARCH_FIELDS", "title,content,tags")
-    search_fields = [field.strip() for field in search_fields_env.split(",") if field.strip()]
+    search_fields = [
+        field.strip()
+        for field in search_fields_env.split(",")
+        if field.strip()
+    ]
     max_docs = _parse_int(os.getenv("SQL_RAG_MAX_DOCS"), 3, minimum=1, maximum=10)
-    max_chars = _parse_int(os.getenv("SQL_RAG_MAX_CHARS_PER_DOC"), 480, minimum=120, maximum=2000)
+    max_chars = _parse_int(
+        os.getenv("SQL_RAG_MAX_CHARS_PER_DOC"),
+        480,
+        minimum=120,
+        maximum=2000,
+    )
     custom_header = os.getenv("SQL_RAG_CONTEXT_HEADER")
 
     retriever = SQLRetriever(
@@ -148,7 +172,10 @@ def build_default_pipeline(db_instance=None) -> RAGPipeline:
 
     header_factory: ContextHeaderFactory
     if custom_header is not None:
-        header_factory = lambda language, count: custom_header if count > 0 else ""
+
+        def header_factory(language: Optional[str], count: int) -> str:
+            return custom_header if count > 0 else ""
+
     else:
         header_factory = _default_header_factory
 

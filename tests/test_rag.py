@@ -12,11 +12,20 @@ class _StubDatabase:
     def __init__(self, documents):
         self._documents = documents
 
-    def search_knowledge_documents(self, query, limit, table_name="knowledge_documents", search_fields=None):
+    def search_knowledge_documents(
+        self,
+        query,
+        limit,
+        table_name="knowledge_documents",
+        search_fields=None,
+    ):
         query = (query or "").lower()
         matches = []
         for document in self._documents:
-            haystack = " ".join(str(document.get(field, "")) for field in ["title", "content", "tags"])
+            haystack = " ".join(
+                str(document.get(field, ""))
+                for field in ["title", "content", "tags"]
+            )
             if query in haystack.lower():
                 matches.append(document)
         return matches[:limit]
@@ -31,7 +40,9 @@ def test_rag_pipeline_injects_context_message():
     documents = [
         {
             "title": "Bearing Maintenance Guide",
-            "content": "Check the bearing vibration every 4 hours and log the readings.",
+            "content": (
+                "Check the bearing vibration every 4 hours and log the readings."
+            ),
             "tags": "maintenance",
             "source": "manual",
             "last_updated": "2024-01-01",

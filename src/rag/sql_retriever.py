@@ -43,7 +43,7 @@ class SQLRetriever:
         if not query or not query.strip():
             return []
         if not self.db:
-            logger.debug("SQLRetriever has no database instance; returning empty result.")
+            logger.debug("SQLRetriever missing database; returning empty result.")
             return []
 
         try:
@@ -54,7 +54,9 @@ class SQLRetriever:
                 search_fields=self.search_fields,
             )
         except AttributeError:
-            logger.warning("Database instance does not support knowledge search; returning empty result.")
+            logger.warning(
+                "Database instance lacks knowledge search; returning empty result."
+            )
             return []
         except Exception as exc:
             logger.exception("Unexpected error during SQL retrieval: %s", exc)

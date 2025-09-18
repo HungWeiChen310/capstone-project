@@ -253,7 +253,7 @@ class Database:
                 self._create_table_if_not_exists(
                     init_cur,
                     "knowledge_documents",
-                    knowledge_documents_cols
+                    knowledge_documents_cols,
                 )
 
                 conn.commit()
@@ -296,13 +296,21 @@ class Database:
             return []
 
         normalized_limit = max(1, min(int(limit), 20))
-        normalized_fields = [field.strip() for field in (search_fields or ["title", "content", "tags"]) if field and field.strip()]
+        normalized_fields = [
+            field.strip()
+            for field in (search_fields or ["title", "content", "tags"])
+            if field and field.strip()
+        ]
         if not normalized_fields:
             normalized_fields = ["title", "content"]
 
         tokens: List[str] = []
         if query:
-            tokens = [token for token in re.split(r"[\s,;]+", str(query)) if token]
+            tokens = [
+                token
+                for token in re.split(r"[\s,;]+", str(query))
+                if token
+            ]
 
         where_clauses: List[str] = []
         params: List[str] = []
@@ -328,7 +336,12 @@ class Database:
                 columns = [column[0] for column in cursor.description]
                 results = []
                 for row in cursor.fetchall():
-                    results.append({columns[idx]: value for idx, value in enumerate(row)})
+                    results.append(
+                        {
+                            columns[idx]: value
+                            for idx, value in enumerate(row)
+                        }
+                    )
                 return results
         except pyodbc.Error as e:
             logger.exception(f"知識庫搜尋失敗: {e}")
