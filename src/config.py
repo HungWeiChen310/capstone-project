@@ -21,6 +21,14 @@ class Config:
     # 一般配置
     DEBUG = os.getenv("FLASK_DEBUG", "False").lower() == "true"
     PORT = int(os.getenv("PORT", 443))
+    # LLM 設定
+    LLM_PROVIDER = os.getenv("LLM_PROVIDER", "openai").strip().lower()
+    OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-3.5-turbo")
+    OPENAI_MAX_TOKENS = int(os.getenv("OPENAI_MAX_TOKENS", "500"))
+    OPENAI_TIMEOUT = int(os.getenv("OPENAI_TIMEOUT", "10"))
+    OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+    OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3")
+    OLLAMA_TIMEOUT = int(os.getenv("OLLAMA_TIMEOUT", "30"))
     # OpenAI 配置
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
     # LINE Bot 配置
@@ -45,8 +53,11 @@ class Config:
                 - 如果為 None，則根據 VALIDATION_MODE 環境變數決定行為
         """
         missing_vars = []
+        supported_providers = {"openai", "ollama"}
+        if cls.LLM_PROVIDER not in supported_providers:
+            missing_vars.append("LLM_PROVIDER")
         # 檢查 OpenAI 設定
-        if not cls.OPENAI_API_KEY:
+        if cls.LLM_PROVIDER == "openai" and not cls.OPENAI_API_KEY:
             missing_vars.append("OPENAI_API_KEY")
         # 檢查 LINE Bot 設定
         if not cls.LINE_CHANNEL_ACCESS_TOKEN:

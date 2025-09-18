@@ -2,7 +2,8 @@ import logging
 import os
 import re
 import time
-from openai import OpenAI
+
+from llm_client import get_llm_client
 from database import db
 from rag import build_default_pipeline
 
@@ -55,7 +56,7 @@ def get_system_prompt(language="zh-Hant"):
                제공하는 조언에는 실용적인 단계와 솔루션이 포함되어야 합니다. 답변이 확실하지 않은 경우 정직하게 말씀해 주십시오.""",
     }
     return system_prompts.get(language, system_prompts["zh-Hant"])
-# OpenAI integration for chat responses
+# LLM integration for chat responses
 
 
 class UserData:
@@ -146,17 +147,15 @@ class UserData:
 user_data = UserData()
 
 
-class OpenAIService:
-    """處理與 OpenAI API 的互動邏輯"""
+class LLMService:
+    """處理與不同 LLM 提供者的互動邏輯"""
 
     def __init__(self, message, user_id):
         self.user_id = user_id  # Changed: sanitize_input removed for user_id
         self.message = sanitize_input(message)  # No change for message
-        # 從環境變數獲取 OpenAI API 金鑰
-        self.api_key = os.getenv("OPENAI_API_KEY")
-        if not self.api_key:
-            raise ValueError("OpenAI API 金鑰未設置")
-        self.client = OpenAI(api_key=self.api_key)
+        self.llm_client = get_llm_client()
+        self.provider_name = getattr(self.llm_client, "provider_name", "unknown")
+        logger.debug("使用的 LLM 提供者: %s", self.provider_name)
         self.max_conversation_length = 10  # 保留最近的 10 輪對話
         # 取得使用者語言偏好
         self.user_prefs = db.get_user_preference(user_id)
@@ -175,7 +174,7 @@ class OpenAIService:
                 self.rag_pipeline = None
 
     def get_fallback_response(self, error=None):
-        """提供 OpenAI API 失敗時的備用回應"""
+        """提供 LLM 服務失敗時的備用回應"""
         fallback_responses = {
             "zh-Hant": "抱歉，我暫時無法處理您的請求。可能是網路連線問題或系統忙碌。請稍後再試，或輸入 'help' 查看其他功能。",
             "zh-Hans": "抱歉，我暂时无法处理您的请求。可能是网络连接问题或系统忙碌。请稍后再试，或输入 'help' 查看其他功能。",
@@ -188,7 +187,7 @@ class OpenAIService:
         return fallback_responses.get(self.language, fallback_responses["zh-Hant"])
 
     def get_response(self):
-        """向 OpenAI API 發送請求並獲取回應"""
+        """向設定的 LLM 服務發送請求並獲取回應"""
         # 取得對話歷史
         conversation = user_data.get_conversation(self.user_id)
         # 確保對話不會超過 max_conversation_length
@@ -221,22 +220,17 @@ class OpenAIService:
             retry_count = 0
             while retry_count < max_retries:
                 try:
-                    # 呼叫 OpenAI API
-                    response = self.client.chat.completions.create(
-                        model="gpt-3.5-turbo",
-                        messages=conversation_for_model,
-                        max_tokens=500,
-                        timeout=10,  # 設定超時時間
+                    # 呼叫 LLM 提供者
+                    ai_message = self.llm_client.generate(
+                        conversation_for_model
                     )
-                    # 取得 AI 回應
-                    ai_message = response.choices[0].message.content
                     # 將 AI 回應加入對話歷史
                     user_data.add_message(self.user_id, "assistant", ai_message)
                     return ai_message
                 except Exception:
                     retry_count += 1
                     logging.warning(
-                        "OpenAI API 請求失敗，正在重試第 %s 次...",
+                        "LLM 服務請求失敗，正在重試第 %s 次...",
                         retry_count,
                     )
                     time.sleep(1)  # 等待 1 秒再重試
@@ -245,7 +239,7 @@ class OpenAIService:
             user_data.add_message(self.user_id, "assistant", fallback_message)
             return fallback_message
         except Exception as e:
-            logging.error(f"OpenAI API 錯誤: {e}")
+            logging.error(f"LLM 服務錯誤: {e}")
             fallback_message = self.get_fallback_response(e)
             user_data.add_message(self.user_id, "assistant", fallback_message)
             return fallback_message
@@ -256,9 +250,13 @@ def reply_message(event):
     # For LINE v3 API compatibility
     user_message = event.message.text
     user_id = event.source.user_id
-    # 使用 OpenAI 服務產生回應
-    openai_service = OpenAIService(message=user_message, user_id=user_id)
-    response = openai_service.get_response()
+    # 使用 LLM 服務產生回應
+    try:
+        llm_service = LLMService(message=user_message, user_id=user_id)
+    except Exception as exc:
+        logger.error("初始化 LLM 服務失敗: %s", exc)
+        return "系統設定錯誤，請稍後再試。"
+    response = llm_service.get_response()
     return response
 
 
