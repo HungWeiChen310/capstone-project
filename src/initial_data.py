@@ -198,6 +198,17 @@ TABLE_CONFIGS = [
             str(row.get('downtime_rate_percent')) if pd.notna(row.get('downtime_rate_percent')) else None,
             str(row.get('notes')) if pd.notna(row.get('notes')) else None
         )
+    },
+    {
+        "excel_sheet_name": "knowledge_documents",
+        "sql_table_name": "knowledge_documents",
+        "sql_columns": ["title", "content", "tags", "source"],
+        "transform_row_data": lambda row: (
+            str(row.get('title')) if pd.notna(row.get('title')) else "Untitled",
+            str(row.get('content')) if pd.notna(row.get('content')) else "",
+            str(row.get('tags')) if pd.notna(row.get('tags')) else None,
+            str(row.get('source')) if pd.notna(row.get('source')) else None,
+        )
     }
 ]
 

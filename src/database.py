@@ -1,7 +1,11 @@
 import logging
 import os
+import re
+from typing import Dict, List, Optional
+
 import pyodbc
 import datetime
+
 from config import Config
 
 
@@ -237,6 +241,21 @@ class Database:
                 """
                 self._create_table_if_not_exists(init_cur, "stats_operational_yearly", stats_operational_yearly_cols)
 
+                # 15. knowledge_documents
+                knowledge_documents_cols = """
+                    [doc_id] INT IDENTITY(1,1) PRIMARY KEY,
+                    [title] NVARCHAR(255) NOT NULL,
+                    [content] NVARCHAR(MAX) NOT NULL,
+                    [tags] NVARCHAR(255) NULL,
+                    [source] NVARCHAR(255) NULL,
+                    [last_updated] datetime2(2) NULL DEFAULT GETDATE()
+                """
+                self._create_table_if_not_exists(
+                    init_cur,
+                    "knowledge_documents",
+                    knowledge_documents_cols
+                )
+
                 conn.commit()
                 logger.info(
                     "資料庫表格初始化/檢查完成 (已建立主鍵與外鍵約束)。"
@@ -261,6 +280,102 @@ class Database:
             logger.info(f"資料表 '{table_name}' 已建立。")
         else:
             logger.info(f"資料表 '{table_name}' 已存在，跳過建立。")
+
+    # --- SQL RAG: Knowledge base helpers ---
+
+    def search_knowledge_documents(
+        self,
+        query: str,
+        limit: int = 3,
+        table_name: str = "knowledge_documents",
+        search_fields: Optional[List[str]] = None,
+    ) -> List[Dict[str, object]]:
+        """根據關鍵字搜尋知識庫內容，提供 RAG 取用的資料。"""
+
+        if limit <= 0:
+            return []
+
+        normalized_limit = max(1, min(int(limit), 20))
+        normalized_fields = [field.strip() for field in (search_fields or ["title", "content", "tags"]) if field and field.strip()]
+        if not normalized_fields:
+            normalized_fields = ["title", "content"]
+
+        tokens: List[str] = []
+        if query:
+            tokens = [token for token in re.split(r"[\s,;]+", str(query)) if token]
+
+        where_clauses: List[str] = []
+        params: List[str] = []
+        for token in tokens:
+            field_conditions = [f"[{field}] LIKE ?" for field in normalized_fields]
+            where_clauses.append("(" + " OR ".join(field_conditions) + ")")
+            params.extend([f"%{token}%"] * len(field_conditions))
+
+        where_sql = " AND ".join(where_clauses)
+        sql = (
+            f"SELECT TOP {normalized_limit} "
+            "[doc_id], [title], [content], [tags], [source], [last_updated] "
+            f"FROM [{table_name}] "
+        )
+        if where_sql:
+            sql += f"WHERE {where_sql} "
+        sql += "ORDER BY [last_updated] DESC;"
+
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(sql, params)
+                columns = [column[0] for column in cursor.description]
+                results = []
+                for row in cursor.fetchall():
+                    results.append({columns[idx]: value for idx, value in enumerate(row)})
+                return results
+        except pyodbc.Error as e:
+            logger.exception(f"知識庫搜尋失敗: {e}")
+            return []
+
+    def upsert_knowledge_document(
+        self,
+        title: str,
+        content: str,
+        tags: Optional[str] = None,
+        source: Optional[str] = None,
+        doc_id: Optional[int] = None,
+        table_name: str = "knowledge_documents",
+    ) -> Optional[int]:
+        """新增或更新單筆知識文件，提供後續彈性擴充。"""
+
+        if not title or not content:
+            logger.warning("新增知識文件時缺少必要欄位，已跳過。")
+            return None
+
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                if doc_id is not None:
+                    update_sql = (
+                        f"UPDATE [{table_name}] "
+                        "SET [title] = ?, [content] = ?, [tags] = ?, [source] = ?, "
+                        "[last_updated] = GETDATE() "
+                        "WHERE [doc_id] = ?;"
+                    )
+                    cursor.execute(update_sql, (title, content, tags, source, doc_id))
+                    if cursor.rowcount:
+                        conn.commit()
+                        return doc_id
+
+                insert_sql = (
+                    f"INSERT INTO [{table_name}] ([title], [content], [tags], [source], [last_updated]) "
+                    "OUTPUT INSERTED.doc_id "
+                    "VALUES (?, ?, ?, ?, GETDATE());"
+                )
+                cursor.execute(insert_sql, (title, content, tags, source))
+                new_id = cursor.fetchone()[0]
+                conn.commit()
+                return new_id
+        except pyodbc.Error as e:
+            logger.exception(f"寫入知識文件失敗: {e}")
+            return None
 
     def add_message(self, sender_id, receiver_id, sender_role, content):
         """加入一筆新的對話記錄（包含發送者角色）"""

@@ -4,6 +4,10 @@ import re
 import time
 from openai import OpenAI
 from database import db
+from rag import build_default_pipeline
+
+
+logger = logging.getLogger(__name__)
 
 
 def sanitize_input(text):
@@ -157,6 +161,18 @@ class OpenAIService:
         # 取得使用者語言偏好
         self.user_prefs = db.get_user_preference(user_id)
         self.language = self.user_prefs.get("language", "zh-Hant")
+        # 初始化 SQL RAG 管線，保留彈性配置
+        rag_flag = os.getenv("ENABLE_SQL_RAG", "true").lower()
+        self.enable_rag = rag_flag in {"1", "true", "yes", "on"}
+        self.rag_pipeline = None
+        if self.enable_rag:
+            try:
+                self.rag_pipeline = build_default_pipeline(db_instance=db)
+                if self.rag_pipeline and not getattr(self.rag_pipeline.retriever, "db", None):
+                    logger.info("SQL RAG 已啟用，但目前無資料庫連線，將跳過檢索。")
+            except Exception as exc:
+                logger.exception("初始化 SQL RAG 管線失敗: %s", exc)
+                self.rag_pipeline = None
 
     def get_fallback_response(self, error=None):
         """提供 OpenAI API 失敗時的備用回應"""
@@ -190,6 +206,16 @@ class OpenAIService:
             conversation.insert(0, {"role": "system", "content": system_prompt})
         # 添加用戶的新訊息
         user_data.add_message(self.user_id, "user", self.message)
+        if self.rag_pipeline:
+            conversation_for_model = self.rag_pipeline.inject_context(
+                conversation,
+                self.message,
+                language=self.language,
+            )
+            if len(conversation_for_model) > len(conversation):
+                logger.debug("已為使用者 %s 注入 SQL RAG 背景知識。", self.user_id)
+        else:
+            conversation_for_model = [dict(message) for message in conversation]
         try:
             max_retries = 3
             retry_count = 0
@@ -198,7 +224,7 @@ class OpenAIService:
                     # 呼叫 OpenAI API
                     response = self.client.chat.completions.create(
                         model="gpt-3.5-turbo",
-                        messages=conversation,
+                        messages=conversation_for_model,
                         max_tokens=500,
                         timeout=10,  # 設定超時時間
                     )
