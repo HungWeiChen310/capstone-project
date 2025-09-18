@@ -20,15 +20,20 @@ class Config:
     """應用程式配置，集中管理所有環境變數"""
     # 一般配置
     DEBUG = os.getenv("FLASK_DEBUG", "False").lower() == "true"
-    PORT = int(os.getenv("PORT", 443))
-    # OpenAI 配置
+    PORT = int(os.getenv("PORT", 5000))
+    # LLM 配置
+    LLM_PROVIDER = os.getenv("LLM_PROVIDER", "openai").lower()
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+    OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-3.5-turbo")
+    OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
+    OLLAMA_MODEL = os.getenv("OLLAMA_MODEL")
+    OLLAMA_TIMEOUT = os.getenv("OLLAMA_TIMEOUT", "30")
     # LINE Bot 配置
     LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
     LINE_CHANNEL_SECRET = os.getenv("LINE_CHANNEL_SECRET")
     # Database 配置
     DB_SERVER = os.getenv("DB_SERVER", "localhost")  # Default
-    DB_NAME = os.getenv("DB_NAME", "Project")  # Default
+    DB_NAME = os.getenv("DB_NAME", "conversations")  # Default
     DB_USER = os.getenv("DB_USER")  # For potential future use with non-trusted connections
     DB_PASSWORD = os.getenv("DB_PASSWORD")  # For potential future use
     # 驗證模式：嚴格 (strict) 或寬鬆 (loose)
@@ -45,9 +50,15 @@ class Config:
                 - 如果為 None，則根據 VALIDATION_MODE 環境變數決定行為
         """
         missing_vars = []
-        # 檢查 OpenAI 設定
-        if not cls.OPENAI_API_KEY:
-            missing_vars.append("OPENAI_API_KEY")
+        # 檢查 LLM 設定
+        if cls.LLM_PROVIDER == "openai":
+            if not cls.OPENAI_API_KEY:
+                missing_vars.append("OPENAI_API_KEY")
+        elif cls.LLM_PROVIDER == "ollama":
+            if not cls.OLLAMA_MODEL:
+                missing_vars.append("OLLAMA_MODEL")
+        else:
+            missing_vars.append("LLM_PROVIDER")
         # 檢查 LINE Bot 設定
         if not cls.LINE_CHANNEL_ACCESS_TOKEN:
             missing_vars.append("LINE_CHANNEL_ACCESS_TOKEN")

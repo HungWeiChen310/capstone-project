@@ -74,7 +74,7 @@ def __about() -> TextMessage:
     """顯示關於訊息"""
     reply_message_obj = TextMessage(
             text=(
-                "這是一個整合 LINE Bot 與 OpenAI 的智能助理，"
+                "這是一個整合 LINE Bot 與 OpenAI 或本地 LLM (Ollama) 的智能助理，"
                 "可以回答您的技術問題、監控半導體設備狀態並展示。"
                 "您可以輸入 'help' 查看更多功能。"
             )

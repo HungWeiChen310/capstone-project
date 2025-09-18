@@ -2,6 +2,8 @@ import logging
 import os
 import re
 import time
+
+import requests
 from openai import OpenAI
 from database import db
 from rag import get_default_knowledge_base
@@ -143,19 +145,18 @@ class UserData:
 user_data = UserData()
 
 
-class OpenAIService:
-    """處理與 OpenAI API 的互動邏輯"""
+class LLMService:
+    """處理與語言模型互動的服務層，支援 OpenAI 與本地 Ollama"""
 
     def __init__(self, message, user_id):
-        self.user_id = user_id  # Changed: sanitize_input removed for user_id
-        self.message = sanitize_input(message)  # No change for message
-        # 從環境變數獲取 OpenAI API 金鑰
-        self.api_key = os.getenv("OPENAI_API_KEY")
-        if not self.api_key:
-            raise ValueError("OpenAI API 金鑰未設置")
-        self.client = OpenAI(api_key=self.api_key)
-        self.max_conversation_length = 10  # 保留最近的 10 輪對話
-        # 取得使用者語言偏好
+        self.user_id = user_id
+        self.message = sanitize_input(message)
+        self.provider = os.getenv("LLM_PROVIDER", "openai").lower()
+        self.openai_model = os.getenv("OPENAI_MODEL", "gpt-3.5-turbo")
+        self.ollama_host = os.getenv("OLLAMA_HOST", "http://localhost:11434")
+        self.ollama_model = os.getenv("OLLAMA_MODEL")
+        self.ollama_timeout = self._parse_float(os.getenv("OLLAMA_TIMEOUT"), default=30)
+        self.max_conversation_length = 10
         self.user_prefs = db.get_user_preference(user_id)
         self.language = self.user_prefs.get("language", "zh-Hant")
         self.rag_enabled = os.getenv("ENABLE_RAG", "true").lower() not in {"false", "0", "no"}
@@ -164,6 +165,19 @@ class OpenAIService:
         self.rag_max_context_chars = max(
             200, self._parse_int(os.getenv("RAG_MAX_CONTEXT_CHARS"), default=1800)
         )
+        self.max_retries = self._parse_int(os.getenv("LLM_MAX_RETRIES"), default=3)
+        self.retry_delay = self._parse_float(os.getenv("LLM_RETRY_DELAY"), default=1.0)
+        if self.provider == "openai":
+            self.api_key = os.getenv("OPENAI_API_KEY")
+            if not self.api_key:
+                raise ValueError("OpenAI API 金鑰未設置")
+            self.client = OpenAI(api_key=self.api_key)
+        elif self.provider == "ollama":
+            if not self.ollama_model:
+                raise ValueError("Ollama 模型未設置，請設定 OLLAMA_MODEL")
+            self.session = requests.Session()
+        else:
+            raise ValueError(f"不支援的 LLM_PROVIDER 設定: {self.provider}")
 
     def get_fallback_response(self, error=None):
         """提供 OpenAI API 失敗時的備用回應"""
@@ -210,38 +224,70 @@ class OpenAIService:
                 {"role": "system", "content": context_message},
             )
         try:
-            max_retries = 3
-            retry_count = 0
-            while retry_count < max_retries:
+            max_attempts = max(self.max_retries, 1)
+            attempt = 0
+            while attempt < max_attempts:
                 try:
-                    # 呼叫 OpenAI API
-                    response = self.client.chat.completions.create(
-                        model="gpt-3.5-turbo",
-                        messages=conversation_snapshot,
-                        max_tokens=500,
-                        timeout=10,  # 設定超時時間
-                    )
-                    # 取得 AI 回應
-                    ai_message = response.choices[0].message.content
-                    # 將 AI 回應加入對話歷史
+                    ai_message = self._generate_response(conversation_snapshot)
                     user_data.add_message(self.user_id, "assistant", ai_message)
                     return ai_message
-                except Exception:
-                    retry_count += 1
+                except Exception as exc:  # pylint: disable=broad-except
+                    attempt += 1
+                    if attempt >= max_attempts:
+                        raise
                     logging.warning(
-                        "OpenAI API 請求失敗，正在重試第 %s 次...",
-                        retry_count,
+                        "LLM 回應失敗（第 %s 次）：%s，等待 %s 秒後重試",
+                        attempt,
+                        exc,
+                        self.retry_delay,
                     )
-                    time.sleep(1)  # 等待 1 秒再重試
-            # 若所有重試都失敗，使用備用回應
-            fallback_message = self.get_fallback_response()
-            user_data.add_message(self.user_id, "assistant", fallback_message)
-            return fallback_message
-        except Exception as e:
-            logging.error(f"OpenAI API 錯誤: {e}")
+                    time.sleep(max(self.retry_delay, 0))
+        except Exception as e:  # pylint: disable=broad-except
+            logging.error(f"LLM 產生回應失敗: {e}")
             fallback_message = self.get_fallback_response(e)
             user_data.add_message(self.user_id, "assistant", fallback_message)
             return fallback_message
+
+    def _generate_response(self, conversation_snapshot):
+        if self.provider == "openai":
+            return self._generate_with_openai(conversation_snapshot)
+        if self.provider == "ollama":
+            return self._generate_with_ollama(conversation_snapshot)
+        raise ValueError(f"不支援的 LLM_PROVIDER 設定: {self.provider}")
+
+    def _generate_with_openai(self, conversation_snapshot):
+        response = self.client.chat.completions.create(
+            model=self.openai_model,
+            messages=conversation_snapshot,
+            max_tokens=500,
+            timeout=10,
+        )
+        return response.choices[0].message.content
+
+    def _generate_with_ollama(self, conversation_snapshot):
+        payload = {
+            "model": self.ollama_model,
+            "messages": conversation_snapshot,
+            "stream": False,
+        }
+        url = self._build_ollama_url("/api/chat")
+        response = self.session.post(
+            url,
+            json=payload,
+            timeout=self.ollama_timeout,
+        )
+        response.raise_for_status()
+        data = response.json()
+        message = data.get("message", {}).get("content")
+        if not message:
+            raise ValueError("Ollama 回傳的資料不包含內容")
+        return message
+
+    def _build_ollama_url(self, path):
+        base = self.ollama_host.rstrip("/")
+        if not path.startswith("/"):
+            path = f"/{path}"
+        return f"{base}{path}"
 
     def _build_context_message(self):
         """根據使用者訊息從知識庫擷取相關內容"""
@@ -309,8 +355,8 @@ def reply_message(event):
     user_message = event.message.text
     user_id = event.source.user_id
     # 使用 OpenAI 服務產生回應
-    openai_service = OpenAIService(message=user_message, user_id=user_id)
-    response = openai_service.get_response()
+    llm_service = LLMService(message=user_message, user_id=user_id)
+    response = llm_service.get_response()
     return response
 
 

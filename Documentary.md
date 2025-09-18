@@ -108,10 +108,14 @@
 
 請依照以下步驟配置執行環境，確保各模組順利運作：
 
-1. **環境變數設定**  
+1. **環境變數設定**
    依照 `.env.example` 建立 `.env` 檔案，設定下列必要環境變數：
-   - **OpenAI 相關：**
-     - `OPENAI_API_KEY`：你的 OpenAI API 金鑰
+   - **LLM 設定：**
+     - `LLM_PROVIDER`：選擇 `openai` 或 `ollama`
+     - `OPENAI_API_KEY`：僅在使用 OpenAI 時需要設定
+     - `OPENAI_MODEL`：OpenAI 模型名稱，預設 `gpt-3.5-turbo`
+     - `OLLAMA_HOST`：Ollama 服務的 HTTP 位址，預設 `http://localhost:11434`
+     - `OLLAMA_MODEL`：Ollama 中可用的模型名稱（如 `llama3`）
    - **LINE Bot 相關：**
      - `LINE_CHANNEL_ACCESS_TOKEN`：LINE Bot 存取金鑰
      - `LINE_CHANNEL_SECRET`：LINE Bot 密鑰
@@ -131,6 +135,9 @@
 - `RAG_CHUNK_SIZE`、`RAG_CHUNK_OVERLAP`：控制文件切片大小與重疊字元數
 - `RAG_TOP_K`、`RAG_MIN_SCORE`：決定檢索時返回的片段數與最低相似度門檻
 - `RAG_MAX_CONTEXT_CHARS`：限制注入模型系統訊息的最大字數，避免過長上下文
+- `LLM_MAX_RETRIES`：模型呼叫失敗後的最大重試次數（預設 3 次）
+- `LLM_RETRY_DELAY`：每次重試前的等待秒數（預設 1 秒）
+- `OLLAMA_TIMEOUT`：呼叫 Ollama API 的超時秒數（預設 30 秒）
 
 2. **安裝依賴套件**  
    執行以下指令安裝所需套件：
@@ -410,8 +417,9 @@
    - 確認 `LINE_CHANNEL_SECRET` 與 LINE 開發者控制台設定一致
    - 檢查是否使用了 ngrok 等工具進行本地測試，可能影響 HTTPS 標頭
 
-2. **API 回覆異常**  
-   - 驗證 `OPENAI_API_KEY` 是否正確，並檢查 API 調用是否超出使用配額
+2. **API 回覆異常**
+   - 若使用 OpenAI，驗證 `OPENAI_API_KEY` 是否正確，並檢查 API 調用是否超出使用配額
+   - 若使用 Ollama，確認 `OLLAMA_HOST` 設定及服務執行狀態，並確保 `OLLAMA_MODEL` 已成功下載
    - 查看應用程式日誌中的詳細錯誤訊息
    - 確認網路連線是否穩定，特別是在容器化環境中
 

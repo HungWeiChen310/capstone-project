@@ -226,11 +226,23 @@ def register_routes(app_instance):  # 傳入 app 實例
         # 直接使用 db 物件的方法
         conversation_stats = db.get_conversation_stats()
         recent_conversations = db.get_recent_conversations(limit=20)  # 使用 user_id
+        llm_provider = os.getenv("LLM_PROVIDER", "openai").lower()
+        if llm_provider == "openai":
+            openai_status = "已設置" if os.getenv("OPENAI_API_KEY") else "未設置"
+            ollama_status = "未使用"
+        elif llm_provider == "ollama":
+            openai_status = "未使用"
+            ollama_status = os.getenv("OLLAMA_MODEL", "未設置")
+        else:
+            openai_status = "未知"
+            ollama_status = "未知"
         system_info = {
-            "openai_api_key": "已設置" if os.getenv("OPENAI_API_KEY") else "未設置",
+            "llm_provider": llm_provider,
+            "openai_api_key": openai_status,
+            "ollama_model": ollama_status,
             "line_channel_secret": "已設置" if os.getenv("LINE_CHANNEL_SECRET") else "未設置",
             "db_server": os.getenv("DB_SERVER", "localhost"),
-            "db_name": os.getenv("DB_NAME", "conversations")
+            "db_name": os.getenv("DB_NAME", "conversations"),
         }
         return render_template(
             "admin_dashboard.html",

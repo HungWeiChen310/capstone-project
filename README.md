@@ -2,7 +2,7 @@
 
 ## 主要功能
 
-- **LINE Bot 智能對話**：接收使用者訊息，利用 ChatGPT 生成專業、具實踐性的回應
+- **LINE Bot 智能對話**：接收使用者訊息，利用雲端 ChatGPT 或本地 Ollama 模型生成專業、具實踐性的回應
 - **文件檢索增強 (RAG)**：整合本地專案文件與程式碼，透過檢索增強生成提供更準確的答案
 - **半導體設備監控**：即時監控黏晶機、打線機、切割機等設備的運作狀態，自動偵測異常並發送警報
 - **多語言支援**：支援繁體中文、簡體中文、英文、日文與韓文等多種語言
@@ -59,8 +59,12 @@ HOST=127.0.0.1
 SECRET_KEY=your_secret_key
 SECRET_KEY_FILE=data/secret_key.txt
 
-# OpenAI API
-OPENAI_API_KEY=your_openai_api_key
+# LLM 設定
+LLM_PROVIDER=openai  # openai 或 ollama
+OPENAI_API_KEY=your_openai_api_key  # 僅在使用 OpenAI 時需要
+OPENAI_MODEL=gpt-3.5-turbo
+OLLAMA_HOST=http://localhost:11434  # 使用本地 Ollama 時可調整
+OLLAMA_MODEL=llama3  # 使用本地 Ollama 時必填
 
 # LINE Bot API
 LINE_CHANNEL_ACCESS_TOKEN=your_line_channel_access_token
@@ -82,6 +86,21 @@ ADMIN_PASSWORD=admin_password
 - `RAG_TOP_K`：每次檢索返回的片段數量
 - `RAG_MIN_SCORE`：相似度門檻值（0~1 之間，建議值 0.05）
 - `RAG_MAX_CONTEXT_CHARS`：插入模型系統提示的最大字數，避免產生過長的上下文
+- `LLM_MAX_RETRIES`：模型呼叫失敗時的重試次數（預設 3 次）
+- `LLM_RETRY_DELAY`：模型呼叫重試前的等待秒數（預設 1 秒）
+- `OLLAMA_TIMEOUT`：調用 Ollama API 的超時秒數（預設 30 秒）
+
+### 使用本地 Ollama
+
+若想切換至本地 LLM，請先安裝並啟動 [Ollama](https://ollama.com/) 伺服器，並設定以下環境變數：
+
+```
+LLM_PROVIDER=ollama
+OLLAMA_HOST=http://localhost:11434  # 依照實際服務位置調整
+OLLAMA_MODEL=llama3  # 或其他已經透過 Ollama 匯入的模型名稱
+```
+
+可透過 `OPENAI_MODEL` 環境變數指定雲端模型，或透過 `OLLAMA_TIMEOUT` 調整本地模型的超時時間。切換後，系統會保留現有的對話管理、RAG 與錯誤回退機制。
 
 ### 安裝相依套件
 

@@ -593,8 +593,20 @@
                 </div>
                 <div class="system-info">
                     <div class="status-info">
-                        <strong>OpenAI API:</strong> 
-                        <span class="status {{ 'status-success' if system_info.openai_api_key == '已設置' else 'status-danger' }}">
+                        <strong>LLM 模式:</strong>
+                        <span class="status status-success">{{ system_info.llm_provider.upper() }}</span>
+                    </div>
+                    {% if system_info.llm_provider == 'ollama' %}
+                    <div class="status-info">
+                        <strong>Ollama 模型:</strong>
+                        <span class="status {{ 'status-success' if system_info.ollama_model != '未設置' else 'status-danger' }}">
+                            {{ system_info.ollama_model }}
+                        </span>
+                    </div>
+                    {% endif %}
+                    <div class="status-info">
+                        <strong>OpenAI API:</strong>
+                        <span class="status {{ 'status-success' if system_info.openai_api_key in ['已設置', '未使用'] else 'status-danger' }}">
                             {{ system_info.openai_api_key }}
                         </span>
                     </div>
