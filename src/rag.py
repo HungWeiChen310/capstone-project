@@ -40,7 +40,7 @@ class RetrievalResult:
 
 
 class RAGKnowledgeBase:
-    """Loads local project files and exposes a TF-IDF based retriever."""
+    """Loads project files with TF-IDF and optionally ingests MSSQL data for retrieval."""
 
     allowed_extensions = {
         ".md",
@@ -60,6 +60,8 @@ class RAGKnowledgeBase:
         chunk_size: int = 600,
         chunk_overlap: int = 120,
         max_file_size: int = 512_000,
+        enable_db_ingestion: bool = True,
+        db_instance: Optional[database.Database] = None,
     ) -> None:
         """Configure the knowledge base and load initial documents."""
         if chunk_size <= 0:
@@ -68,7 +70,9 @@ class RAGKnowledgeBase:
             raise ValueError("chunk_overlap cannot be negative")
         if chunk_overlap >= chunk_size:
             logger.warning(
-                "chunk_overlap (%s) 大於或等於 chunk_size (%s)，將自動調整", chunk_overlap, chunk_size
+                "chunk_overlap (%s) is not smaller than chunk_size (%s); adjusting automatically",
+                chunk_overlap,
+                chunk_size,
             )
             chunk_overlap = max(0, chunk_size // 4)
 
@@ -76,22 +80,40 @@ class RAGKnowledgeBase:
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
         self.max_file_size = max_file_size
+        self._enable_db_ingestion = enable_db_ingestion and os.getenv(
+            "ENABLE_RAG_DB", "true"
+        ).lower() not in {"false", "0", "no"}
+        self._db_instance: Optional[database.Database] = db_instance
+        self._default_db_top_k = _safe_int(os.getenv("RAG_DB_TOP_K"), default=3)
+        if self._default_db_top_k < 0:
+            self._default_db_top_k = 0
         self._documents: List[KnowledgeDocument] = []
         self._doc_tokens: List[List[str]] = []
         self._doc_term_frequencies: List[Counter[str]] = []
         self._doc_vectors: List[Dict[str, float]] = []
         self._idf: Dict[str, float] = {}
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
 
         env_sources = os.getenv("RAG_SOURCE_PATHS")
-        if source_paths is None and env_sources:
-            source_paths = [path for path in env_sources.split(os.pathsep) if path]
+        book_dir = self.project_root / "src_book"
+        if source_paths is None:
+            if book_dir.exists():
+                source_paths = [
+                    path
+                    for path in book_dir.rglob("*")
+                    if path.is_file() and path.suffix.lower() in {".txt", ".md"}
+                ]
+            elif env_sources:
+                source_paths = [path for path in env_sources.split(os.pathsep) if path]
 
         self._source_paths: Sequence[Path] = self._resolve_sources(source_paths)
-        self._load_documents()
+        with self._lock:
+            self._load_documents()
+            self._load_database_documents()
+
 
     #----------------------------------------------------------------
-    # MS SQL 連線
+    # MS SQL ingestion
     #----------------------------------------------------------------
 
     def ingest_from_mssql(
@@ -129,6 +151,7 @@ class RAGKnowledgeBase:
             text_columns: Sequence[str],
             meta_columns: Sequence[str],
             source_tag: str,
+            table_name: str,
         ) -> Tuple[List[KnowledgeDocument], List[List[str]]]:
             new_docs: List[KnowledgeDocument] = []
             new_tokens: List[List[str]] = []
@@ -153,6 +176,9 @@ class RAGKnowledgeBase:
                 metadata: Dict[str, str] = {
                     "source": source_tag,
                     "row_id": "::".join(doc_id_parts),
+                    "origin": "database",
+                    "source_type": "mssql",
+                    "source_table": table_name,
                 }
                 for column in meta_columns:
                     value = _format_value(row.get(column))
@@ -238,6 +264,7 @@ class RAGKnowledgeBase:
                             text_columns=source["text_columns"],
                             meta_columns=source["meta_columns"],
                             source_tag=source["source_tag"],
+                            table_name=source["table"],
                         )
                         if docs:
                             ingested_batches.append((source["source_tag"], docs, tokens))
@@ -290,6 +317,20 @@ class RAGKnowledgeBase:
         total_docs = sum(len(docs) for _, docs, _ in ingested_batches)
         logger.info("MSSQL ingestion added %s documents to the knowledge base.", total_docs)
 
+    def _load_database_documents(self) -> None:
+        """Load database-backed knowledge chunks when enabled."""
+        if not self._enable_db_ingestion:
+            return
+        db_instance = self._db_instance or getattr(database, "db", None)
+        if db_instance is None:
+            logger.debug("Skipping MSSQL ingestion for RAG knowledge base: no database instance available.")
+            return
+        self._db_instance = db_instance
+        try:
+            self.ingest_from_mssql(db_instance)
+        except Exception as exc:  # pylint: disable=broad-except
+            logger.exception("Failed to ingest MSSQL data for RAG knowledge base: %s", exc)
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -305,6 +346,7 @@ class RAGKnowledgeBase:
         """Reload documents and rebuild the internal index."""
         with self._lock:
             self._load_documents()
+            self._load_database_documents()
 
     def search(
         self,
@@ -312,7 +354,10 @@ class RAGKnowledgeBase:
         *,
         top_k: int = 3,
         min_score: float = 0.05,
+        include_db_results: Optional[bool] = None,
+        db_top_k: Optional[int] = None,
     ) -> List[RetrievalResult]:
+        """Search the knowledge base prioritising local TF-IDF chunks and optionally appending MSSQL rows."""
         query = (query or "").strip()
         if not query or not self._documents:
             return []
@@ -325,16 +370,44 @@ class RAGKnowledgeBase:
         if not query_vector:
             return []
 
-        scores: List[RetrievalResult] = []
+        include_db = self._enable_db_ingestion if include_db_results is None else include_db_results
+        effective_db_top_k = db_top_k if db_top_k is not None else self._default_db_top_k
+        if effective_db_top_k is None:
+            effective_db_top_k = 0
+        if effective_db_top_k < 0:
+            effective_db_top_k = 0
+
+        text_hits: List[RetrievalResult] = []
+        db_hits: List[RetrievalResult] = []
+
         for document, doc_vector in zip(self._documents, self._doc_vectors):
             if not doc_vector:
                 continue
             score = sum(query_vector.get(term, 0.0) * weight for term, weight in doc_vector.items())
-            if score >= min_score:
-                scores.append(RetrievalResult(document=document, score=score))
+            if score < min_score:
+                continue
+            result = RetrievalResult(document=document, score=score)
+            origin = document.metadata.get("origin")
+            if origin == "database":
+                db_hits.append(result)
+            else:
+                text_hits.append(result)
 
-        scores.sort(key=lambda item: item.score, reverse=True)
-        return scores[:top_k]
+        if not text_hits and not db_hits:
+            return []
+
+        text_hits.sort(key=lambda item: item.score, reverse=True)
+        primary_results = text_hits[:top_k]
+
+        if not include_db or effective_db_top_k == 0:
+            return primary_results
+
+        db_hits.sort(key=lambda item: item.score, reverse=True)
+        supplemental = db_hits[:effective_db_top_k]
+        if not supplemental:
+            return primary_results
+
+        return primary_results + supplemental
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -360,7 +433,7 @@ class RAGKnowledgeBase:
             if path.exists():
                 resolved.append(path)
             else:
-                logger.debug("忽略不存在的 RAG 來源：%s", path)
+                logger.debug("Skipping unavailable RAG source: %s", path)
         return tuple(resolved)
 
     def _load_documents(self) -> None:
@@ -371,7 +444,7 @@ class RAGKnowledgeBase:
             try:
                 text = file_path.read_text(encoding="utf-8", errors="ignore")
             except OSError as exc:
-                logger.warning("讀取檔案 %s 失敗：%s", file_path, exc)
+                logger.warning("Failed to read file %s: %s", file_path, exc)
                 continue
 
             normalized = text.replace("\r\n", "\n")
@@ -391,6 +464,8 @@ class RAGKnowledgeBase:
                     "source": relative_path,
                     "chunk_index": str(idx),
                     "chunk_count": str(total_chunks),
+                    "origin": "text",
+                    "source_type": "filesystem",
                 }
                 doc_id = f"{relative_path}::chunk-{idx}"
                 documents.append(KnowledgeDocument(doc_id=doc_id, content=chunk, metadata=metadata))
@@ -400,9 +475,9 @@ class RAGKnowledgeBase:
         self._doc_tokens = doc_tokens
         self._rebuild_index()
         if documents:
-            logger.info("RAG 知識庫已載入 %s 份文件分片", len(documents))
+            logger.info("RAG knowledge base loaded %s filesystem chunks.", len(documents))
         else:
-            logger.warning("RAG 知識庫未載入任何文件，請確認來源設定")
+            logger.warning("RAG knowledge base did not load any filesystem documents; verify source paths.")
 
     def _iter_source_files(self, paths: Sequence[Path]) -> Iterable[Path]:
         for path in paths:
@@ -420,7 +495,7 @@ class RAGKnowledgeBase:
             return False
         try:
             if file_path.stat().st_size > self.max_file_size:
-                logger.debug("跳過過大的檔案：%s", file_path)
+                logger.debug("Skipping oversized file for RAG: %s", file_path)
                 return False
         except OSError:
             return False
@@ -551,6 +626,6 @@ def _safe_int(raw_value: Optional[str], *, default: int) -> int:
     try:
         value = int(raw_value)
     except (TypeError, ValueError):
-        logger.warning("無法解析整數值 %s，將使用預設值 %s", raw_value, default)
+        logger.warning("Unable to parse integer value %s; using default %s", raw_value, default)
         return default
     return value

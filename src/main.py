@@ -2,7 +2,7 @@ import logging
 import os
 import re
 import time
-from openai import OpenAI
+import requests
 from database import db
 from rag import get_default_knowledge_base
 
@@ -52,7 +52,7 @@ def get_system_prompt(language="zh-Hant"):
                제공하는 조언에는 실용적인 단계와 솔루션이 포함되어야 합니다. 답변이 확실하지 않은 경우 정직하게 말씀해 주십시오.""",
     }
     return system_prompts.get(language, system_prompts["zh-Hant"])
-# OpenAI integration for chat responses
+# Ollama integration for chat responses
 
 
 class UserData:
@@ -143,19 +143,19 @@ class UserData:
 user_data = UserData()
 
 
-class OpenAIService:
-    """處理與 OpenAI API 的互動邏輯"""
+class OllamaService:
+    """Handle interactions with the local Ollama model."""
 
     def __init__(self, message, user_id):
         self.user_id = user_id  # Changed: sanitize_input removed for user_id
         self.message = sanitize_input(message)  # No change for message
-        # 從環境變數獲取 OpenAI API 金鑰
-        self.api_key = os.getenv("OPENAI_API_KEY")
-        if not self.api_key:
-            raise ValueError("OpenAI API 金鑰未設置")
-        self.client = OpenAI(api_key=self.api_key)
-        self.max_conversation_length = 10  # 保留最近的 10 輪對話
-        # 取得使用者語言偏好
+        self.ollama_host = os.getenv("OLLAMA_HOST", "127.0.0.1")
+        self.ollama_port = self._parse_int(os.getenv("OLLAMA_PORT"), default=11434)
+        self.ollama_scheme = os.getenv("OLLAMA_SCHEME", "http")
+        self.ollama_model = os.getenv("OLLAMA_MODEL", "gpt-oss:20b")
+        self.session = requests.Session()
+        self.max_conversation_length = 10  # 保留最近 10 輪對話
+        # 讀取使用者語言偏好
         self.user_prefs = db.get_user_preference(user_id)
         self.language = self.user_prefs.get("language", "zh-Hant")
         self.rag_enabled = os.getenv("ENABLE_RAG", "true").lower() not in {"false", "0", "no"}
@@ -164,38 +164,40 @@ class OpenAIService:
         self.rag_max_context_chars = max(
             200, self._parse_int(os.getenv("RAG_MAX_CONTEXT_CHARS"), default=1800)
         )
-
+        self.request_timeout = max(
+            5.0,
+            self._parse_float(os.getenv("OLLAMA_TIMEOUT"), default=30.0)
+        )
     def get_fallback_response(self, error=None):
-        """提供 OpenAI API 失敗時的備用回應"""
+        """Provide a graceful reply when the Ollama API fails."""
         fallback_responses = {
-            "zh-Hant": "抱歉，我暫時無法處理您的請求。可能是網路連線問題或系統忙碌。請稍後再試，或輸入 'help' 查看其他功能。",
-            "zh-Hans": "抱歉，我暂时无法处理您的请求。可能是网络连接问题或系统忙碌。请稍后再试，或输入 'help' 查看其他功能。",
-            "en": "Sorry, I cannot process your request at the moment. This might be due to connectivity issues or \
-                system load. Please try again later or type 'help' to see other features.",
-            "ja": "申し訳ありませんが、現在リクエストを処理できません。接続の問題やシステムの負荷が原因かもしれません。後でもう一度お試しいただくか、「help」と入力して他の機能をご覧ください。",
-            "ko": "죄송합니다. 현재 요청을 처리할 수 없습니다. 연결 문제나 시스템 로드로 인한 것일 수 있습니다. 나중에 다시 시도하거나 'help'를 입력하여 다른 기능을 확인하세요.",
+            "zh-Hant": "抱歉，目前無法處理您的請求，可能是本地 Ollama 服務忙碌或連線異常。請稍後再試，或輸入 'help' 查看其他功能。",
+            "zh-Hans": "抱歉，目前无法处理您的请求，可能是本地 Ollama 服务忙碌或连接异常。请稍后再试，或输入 'help' 查看其他功能。",
+            "en": "Sorry, I cannot process your request right now. The local Ollama service might be busy or unreachable. Please try again later or type 'help' to see other features.",
+            "ja": "申し訳ありませんが、現在リクエストを処理できません。ローカルの Ollama サービスが混雑しているか接続できない可能性があります。しばらくしてから再度お試しいただくか、『help』と入力して他の機能をご確認ください。",
+            "ko": "죄송하지만 현재 요청을 처리할 수 없습니다. 로컬 Ollama 서비스가 바쁘거나 연결이 원활하지 않을 수 있습니다. 잠시 후 다시 시도하시거나 'help'를 입력해 다른 기능을 확인해 주세요.",
         }
-        # 使用對應語言的回覆，若無則使用繁體中文
+        # 使用對應語言的回覆，無則使用繁體中文
         return fallback_responses.get(self.language, fallback_responses["zh-Hant"])
 
     def get_response(self):
-        """向 OpenAI API 發送請求並獲取回應"""
+        """Send a chat request to the local Ollama API and return the reply."""
         # 取得對話歷史
         conversation = user_data.get_conversation(self.user_id)
         # 確保對話不會超過 max_conversation_length
         if (
             len(conversation) >= self.max_conversation_length * 2
-        ):  # 乘以 2 因為每輪對話有使用者和助手各一條
-            # 保留系統提示和最近的對話
+        ):  # 乘以 2 是為每輪對話保留使用者與助手訊息
+            # 保留系統提示與最近對話
             conversation = (
                 conversation[:1]
                 + conversation[-(self.max_conversation_length * 2 - 1):]
             )
-        # 檢查是否有系統提示，若無則加入
+        # 檢查是否包含系統提示，若無則加入
         if not conversation or conversation[0]["role"] != "system":
             system_prompt = get_system_prompt(self.language)
             conversation.insert(0, {"role": "system", "content": system_prompt})
-        # 添加用戶的新訊息
+        # 新增使用者訊息
         user_data.add_message(self.user_id, "user", self.message)
         conversation_snapshot = [dict(msg) for msg in conversation]
         context_message = self._build_context_message()
@@ -214,31 +216,42 @@ class OpenAIService:
             retry_count = 0
             while retry_count < max_retries:
                 try:
-                    # 呼叫 OpenAI API
-                    response = self.client.chat.completions.create(
-                        model="gpt-3.5-turbo",
-                        messages=conversation_snapshot,
-                        max_tokens=500,
-                        timeout=10,  # 設定超時時間
+                    api_url = f"{self.ollama_scheme}://{self.ollama_host}:{self.ollama_port}/api/chat"
+                    payload = {
+                        "model": self.ollama_model,
+                        "messages": conversation_snapshot,
+                        "stream": False,
+                    }
+                    response = self.session.post(
+                        api_url,
+                        json=payload,
+                        timeout=self.request_timeout,
                     )
-                    # 取得 AI 回應
-                    ai_message = response.choices[0].message.content
-                    # 將 AI 回應加入對話歷史
+                    response.raise_for_status()
+                    data = response.json()
+                    ai_message = ""
+                    if isinstance(data, dict):
+                        ai_message = data.get("message", {}).get("content") or data.get("response", "")
+                    if not ai_message:
+                        raise ValueError("Empty response from Ollama chat API")
+                    # 將 AI 回覆存入對話歷史
                     user_data.add_message(self.user_id, "assistant", ai_message)
                     return ai_message
-                except Exception:
+                except (requests.RequestException, ValueError) as exc:
                     retry_count += 1
                     logging.warning(
-                        "OpenAI API 請求失敗，正在重試第 %s 次...",
+                        "Ollama chat request failed (attempt %s/%s): %s",
                         retry_count,
+                        max_retries,
+                        exc,
                     )
                     time.sleep(1)  # 等待 1 秒再重試
-            # 若所有重試都失敗，使用備用回應
+            # 所有重試都失敗，回傳預設訊息
             fallback_message = self.get_fallback_response()
             user_data.add_message(self.user_id, "assistant", fallback_message)
             return fallback_message
         except Exception as e:
-            logging.error(f"OpenAI API 錯誤: {e}")
+            logging.error(f"Ollama service error: {e}")
             fallback_message = self.get_fallback_response(e)
             user_data.add_message(self.user_id, "assistant", fallback_message)
             return fallback_message
@@ -308,9 +321,9 @@ def reply_message(event):
     # For LINE v3 API compatibility
     user_message = event.message.text
     user_id = event.source.user_id
-    # 使用 OpenAI 服務產生回應
-    openai_service = OpenAIService(message=user_message, user_id=user_id)
-    response = openai_service.get_response()
+    # 使用 Ollama 服務產生回應
+    ollama_service = OllamaService(message=user_message, user_id=user_id)
+    response = ollama_service.get_response()
     return response
 
 

@@ -227,7 +227,8 @@ def register_routes(app_instance):  # 傳入 app 實例
         conversation_stats = db.get_conversation_stats()
         recent_conversations = db.get_recent_conversations(limit=20)  # 使用 user_id
         system_info = {
-            "openai_api_key": "已設置" if os.getenv("OPENAI_API_KEY") else "未設置",
+            "ollama_endpoint": f"{os.getenv('OLLAMA_HOST', '127.0.0.1')}:{os.getenv('OLLAMA_PORT', '11434')}",
+            "ollama_model": os.getenv("OLLAMA_MODEL", "gpt-oss:20b"),
             "line_channel_secret": "已設置" if os.getenv("LINE_CHANNEL_SECRET") else "未設置",
             "db_server": os.getenv("DB_SERVER", "localhost"),
             "db_name": os.getenv("DB_NAME", "conversations")
@@ -381,7 +382,7 @@ def handle_message(event):
             logger.error("無法導入 src.main.reply_message")
             reply_message_obj = TextMessage(text="抱歉，AI 對話功能暫時無法使用。")
         except Exception as e:
-            logger.error(f"調用 OpenAI 回覆訊息失敗: {e}")
+            logger.error(f"調用 Ollama 回覆訊息失敗: {e}")
             reply_message_obj = TextMessage(
                 text="抱歉，處理您的請求時發生了錯誤，AI 功能可能暫時無法使用。"
             )

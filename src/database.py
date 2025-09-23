@@ -301,7 +301,7 @@ class Database:
                 # 從資料庫讀取是 DESC，但通常聊天室顯示是 ASC (舊的在上面)
                 # 所以先 reverse
                 messages = [
-                    # 統一鍵名為 'role' 以符合 OpenAI 格式
+                    # 統一鍵名為 'role' 以符合 Ollama 格式
                     {"role": sender_role, "content": content}
                     for sender_role, content in conv_hist_cur.fetchall()
                 ]
