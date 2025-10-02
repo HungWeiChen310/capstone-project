@@ -97,7 +97,7 @@ class UserData:
     def add_message(self, user_id, role, content):
         """新增一則訊息到用戶的對話記錄中 (同時儲存到資料庫)"""
         # 加入資料庫
-        db.add_message(user_id, role, content)
+        db.add_message("bot",user_id, role, content)
         # 更新最後活動時間
         self.user_last_active[user_id] = time.time()
         # 更新記憶體快取

@@ -375,7 +375,7 @@ def handle_message(event):
     )
     if reply_message_obj is None:
         try:
-            from src.main import reply_message as main_reply_message
+            from main import reply_message as main_reply_message
             response_text = main_reply_message(event)
             reply_message_obj = TextMessage(text=response_text)
         except ImportError:

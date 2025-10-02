@@ -62,12 +62,11 @@ class Database:
 
                 # 3. conversations
                 conversations_cols = """
-                    [message_id] NVARCHAR(255) NOT NULL PRIMARY KEY,
                     [sender_id] NVARCHAR(255) NOT NULL FOREIGN KEY REFERENCES user_preferences(user_id),
-                    [receiver_id] NVARCHAR(255) NULL,
-                    [sender_role] NVARCHAR(50) NULL,
+                    [receiver_id] NVARCHAR(255) NOT NULL,
+                    [sender_role] NVARCHAR(50) NOT NULL,
                     [content] NVARCHAR(MAX) NOT NULL,
-                    [timestamp] datetime2(2) NULL DEFAULT GETDATE()
+                    [timestamp] datetime2(2) NOT NULL DEFAULT GETDATE()
                 """
                 self._create_table_if_not_exists(init_cur, "conversations", conversations_cols)
 
