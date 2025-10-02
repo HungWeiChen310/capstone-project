@@ -98,7 +98,7 @@ class UserData:
         """新增一則訊息到用戶的對話記錄中 (同時儲存到資料庫)"""
         # 加入資料庫
         db.add_message("bot",user_id, role, content)
-        # 更新最後活動時間
+        # 更新最後活動時間F
         self.user_last_active[user_id] = time.time()
         # 更新記憶體快取
         conversation = self.get_conversation(user_id)
@@ -149,7 +149,7 @@ class OllamaService:
     def __init__(self, message, user_id):
         self.user_id = user_id  # Changed: sanitize_input removed for user_id
         self.message = sanitize_input(message)  # No change for message
-        self.ollama_host = os.getenv("OLLAMA_HOST", "127.0.0.1")
+        self.ollama_host = os.getenv("OLLAMA_HOST", "120.105.18.33")
         self.ollama_port = self._parse_int(os.getenv("OLLAMA_PORT"), default=11434)
         self.ollama_scheme = os.getenv("OLLAMA_SCHEME", "http")
         self.ollama_model = os.getenv("OLLAMA_MODEL", "gpt-oss:20b")

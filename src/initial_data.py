@@ -1,4 +1,4 @@
-import logging
+﻿import logging
 import pandas as pd
 import pyodbc
 from database import db
@@ -16,6 +16,16 @@ logger = logging.getLogger(__name__)
 # --- 2. 設定 Excel 檔案路徑 ---
 # 定義包含所有來源數據的 Excel 檔案路徑。
 EXCEL_FILE_PATH = r'data\simulated_data (1).xlsx'
+
+
+def _parse_excel_datetime(value):
+    """Convert Excel cell to Python datetime or None."""
+    if value is None:
+        return None
+    ts = pd.to_datetime(value, errors='coerce')
+    if pd.isna(ts):
+        return None
+    return ts.to_pydatetime()
 
 # --- 4. 完整的表格匯入設定 ---
 """
@@ -198,11 +208,26 @@ TABLE_CONFIGS = [
             str(row.get('downtime_rate_percent')) if pd.notna(row.get('downtime_rate_percent')) else None,
             str(row.get('notes')) if pd.notna(row.get('notes')) else None
         )
+    },
+    {
+        "excel_sheet_name": "user_preferences",
+        "sql_table_name": "user_preferences",
+        "sql_columns": ["user_id", "language", "role", "is_admin", "responsible_area", "created_at", "display_name", "last_active"],
+        "transform_row_data": lambda row: (
+            str(row.get('user_id')),
+            str(row.get('language')) if pd.notna(row.get('language')) else None,
+            str(row.get('role')) if pd.notna(row.get('role')) else None,
+            int(row.get('is_admin')) if pd.notna(row.get('is_admin')) else None,
+            str(row.get('responsible_area')) if pd.notna(row.get('responsible_area')) else None,
+            _parse_excel_datetime(row.get('created_at')),
+            str(row.get('display_name')) if pd.notna(row.get('display_name')) else None,
+            _parse_excel_datetime(row.get('last_active'))
+        )
     }
 ]
 
 
-# --- 5. 最終的匯入主程式 (已簡化) ---
+# 最終的匯入主程式
 def import_data_from_excel():
     """從指定的 Excel 檔案讀取數據，並使用高效能的批次插入將其匯入到資料庫中。"""
     try:
