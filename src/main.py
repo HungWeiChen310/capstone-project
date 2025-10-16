@@ -58,7 +58,7 @@ def get_system_prompt(language="zh-Hant"):
 class UserData:
     """存儲用戶對話記錄的類 - 使用資料庫與記憶體快取"""
 
-    def __init__(self, max_users=1000, max_messages=20, inactive_timeout=3600):
+    def __init__(self, max_users=1000, max_messages=0, inactive_timeout=3600):
         self.temp_conversations = {}  # 暫存記憶體中的對話
         self.user_last_active = {}  # 記錄用戶最後活動時間
         self.max_users = max_users  # 最大快取用戶數
@@ -88,8 +88,7 @@ class UserData:
         # 先檢查記憶體快取
         if user_id in self.temp_conversations:
             return self.temp_conversations[user_id]
-        # 若不在記憶體中，從資料庫取得
-        conversation = db.get_conversation_history(user_id)
+        conversation = []
         # 快取到記憶體
         self.temp_conversations[user_id] = conversation
         return conversation
@@ -149,7 +148,7 @@ class OllamaService:
     def __init__(self, message, user_id):
         self.user_id = user_id  # Changed: sanitize_input removed for user_id
         self.message = sanitize_input(message)  # No change for message
-        self.ollama_host = os.getenv("OLLAMA_HOST", "120.105.18.33")
+        self.ollama_host = os.getenv("OLLAMA_HOST", "localhost")
         self.ollama_port = self._parse_int(os.getenv("OLLAMA_PORT"), default=11434)
         self.ollama_scheme = os.getenv("OLLAMA_SCHEME", "http")
         self.ollama_model = os.getenv("OLLAMA_MODEL", "gpt-oss:20b")
@@ -166,7 +165,7 @@ class OllamaService:
         )
         self.request_timeout = max(
             5.0,
-            self._parse_float(os.getenv("OLLAMA_TIMEOUT"), default=30.0)
+            self._parse_float(os.getenv("OLLAMA_TIMEOUT"), default=300.0)
         )
     def get_fallback_response(self, error=None):
         """Provide a graceful reply when the Ollama API fails."""
@@ -183,7 +182,7 @@ class OllamaService:
     def get_response(self):
         """Send a chat request to the local Ollama API and return the reply."""
         # 取得對話歷史
-        conversation = user_data.get_conversation(self.user_id)
+        conversation = []#user_data.get_conversation(self.user_id)
         # 確保對話不會超過 max_conversation_length
         if (
             len(conversation) >= self.max_conversation_length * 2
@@ -216,7 +215,11 @@ class OllamaService:
             retry_count = 0
             while retry_count < max_retries:
                 try:
-                    api_url = f"{self.ollama_scheme}://{self.ollama_host}:{self.ollama_port}/api/chat"
+                    # include configured port unless host already embeds one (e.g. 127.0.0.1:11434)
+                    base_url = f"{self.ollama_scheme}://{self.ollama_host}"
+                    if ":" not in self.ollama_host.split("]")[-1]:
+                        base_url += f":{self.ollama_port}"
+                    api_url = f"{base_url}/api/chat"
                     payload = {
                         "model": self.ollama_model,
                         "messages": conversation_snapshot,
@@ -322,8 +325,10 @@ def reply_message(event):
     user_message = event.message.text
     user_id = event.source.user_id
     # 使用 Ollama 服務產生回應
+    logging.info(f"Received message from user {user_id}: {user_message}")
     ollama_service = OllamaService(message=user_message, user_id=user_id)
     response = ollama_service.get_response()
+    logging.info(f"Response from Ollama service for user {user_id}: {response}")
     return response
 
 
