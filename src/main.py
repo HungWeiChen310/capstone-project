@@ -58,7 +58,7 @@ def get_system_prompt(language="zh-Hant"):
 class UserData:
     """存儲用戶對話記錄的類 - 使用資料庫與記憶體快取"""
 
-    def __init__(self, max_users=1000, max_messages=0, inactive_timeout=3600):
+    def __init__(self, max_users=1000, max_messages=40, inactive_timeout=3600):
         self.temp_conversations = {}  # 暫存記憶體中的對話
         self.user_last_active = {}  # 記錄用戶最後活動時間
         self.max_users = max_users  # 最大快取用戶數
@@ -95,21 +95,25 @@ class UserData:
 
     def add_message(self, user_id, role, content):
         """新增一則訊息到用戶的對話記錄中 (同時儲存到資料庫)"""
-        # 加入資料庫
-        db.add_message("bot",user_id, role, content)
-        # 更新最後活動時間F
+        # persist to database; assistant replies use the system account 'bot'
+        sender = user_id if role == "user" else "bot"
+        receiver = "bot" if role == "user" else user_id
+        db.add_message(sender, receiver, role, content)
+        # 更新最後活動時間
         self.user_last_active[user_id] = time.time()
         # 更新記憶體快取
         conversation = self.get_conversation(user_id)
         conversation.append({"role": role, "content": content})
         # 限制對話長度 (保留系統提示)
-        if len(conversation) > self.max_messages + 1:
-            # 保留第一條系統提示和最近的訊息
-            if conversation[0]["role"] == "system":
-                conversation = [conversation[0]] + conversation[-(self.max_messages):]
-            else:
-                conversation = conversation[-(self.max_messages):]
-            self.temp_conversations[user_id] = conversation
+        if self.max_messages and self.max_messages > 0:
+            # 計算需保留的訊息數（不含系統提示）
+            has_system = bool(conversation and conversation[0].get("role") == "system")
+            keep_limit = self.max_messages + (1 if has_system else 0)
+            if len(conversation) > keep_limit:
+                if has_system:
+                    conversation[:] = [conversation[0]] + conversation[-self.max_messages:]
+                else:
+                    conversation[:] = conversation[-self.max_messages:]
         return conversation
 
     def _cleanup_least_active_users(self):
@@ -148,7 +152,8 @@ class OllamaService:
     def __init__(self, message, user_id):
         self.user_id = user_id  # Changed: sanitize_input removed for user_id
         self.message = sanitize_input(message)  # No change for message
-        self.ollama_host = os.getenv("OLLAMA_HOST", "localhost")
+        self.ollama_host = os.getenv("OLLAMA_HOST", "120.105.18.33")
+        logging.info(f"Configured Ollama host: {self.ollama_host}")
         self.ollama_port = self._parse_int(os.getenv("OLLAMA_PORT"), default=11434)
         self.ollama_scheme = os.getenv("OLLAMA_SCHEME", "http")
         self.ollama_model = os.getenv("OLLAMA_MODEL", "gpt-oss:20b")
@@ -182,23 +187,19 @@ class OllamaService:
     def get_response(self):
         """Send a chat request to the local Ollama API and return the reply."""
         # 取得對話歷史
-        conversation = []#user_data.get_conversation(self.user_id)
-        # 確保對話不會超過 max_conversation_length
-        if (
-            len(conversation) >= self.max_conversation_length * 2
-        ):  # 乘以 2 是為每輪對話保留使用者與助手訊息
-            # 保留系統提示與最近對話
-            conversation = (
-                conversation[:1]
-                + conversation[-(self.max_conversation_length * 2 - 1):]
-            )
-        # 檢查是否包含系統提示，若無則加入
-        if not conversation or conversation[0]["role"] != "system":
-            system_prompt = get_system_prompt(self.language)
+        conversation = user_data.get_conversation(self.user_id)
+        system_prompt = get_system_prompt(self.language)
+        # 確保系統提示存在於首位，並在語言偏好變更時更新
+        if not conversation:
             conversation.insert(0, {"role": "system", "content": system_prompt})
+        else:
+            if conversation[0].get("role") != "system":
+                conversation.insert(0, {"role": "system", "content": system_prompt})
+            elif conversation[0].get("content") != system_prompt:
+                conversation[0]["content"] = system_prompt
         # 新增使用者訊息
         user_data.add_message(self.user_id, "user", self.message)
-        conversation_snapshot = [dict(msg) for msg in conversation]
+        conversation_snapshot = self._prepare_conversation_snapshot(conversation)
         context_message = self._build_context_message()
         if context_message:
             insert_index = (
@@ -317,6 +318,24 @@ class OllamaService:
             return float(value)
         except (TypeError, ValueError):
             return default
+
+    def _prepare_conversation_snapshot(self, conversation):
+        """建立傳送給模型的對話快照，保留系統提示與最近多輪訊息"""
+        if not conversation:
+            return []
+        max_history = max(1, self.max_conversation_length * 2)
+        system_message = conversation[0] if conversation[0].get("role") == "system" else None
+        history = conversation[1:] if system_message else list(conversation)
+        if max_history and len(history) > max_history:
+            history = history[-max_history:]
+        # 確保對話從使用者訊息開始，避免殘留的助手訊息導致語境錯亂
+        while history and history[0].get("role") != "user":
+            history = history[1:]
+        snapshot = []
+        if system_message:
+            snapshot.append(dict(system_message))
+        snapshot.extend(dict(msg) for msg in history)
+        return snapshot
 
 
 def reply_message(event):

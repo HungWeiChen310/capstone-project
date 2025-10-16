@@ -369,8 +369,6 @@ def handle_message(event):
     text_lower = text.lower()
     user_id = event.source.user_id  # 獲取 user_id
 
-    logger.info(f"Received message from user {user_id}: {text}")
-
     db.get_user_preference(user_id)  # 如果不存在，會在 get_user_preference 中創建
 
     reply_message_obj = reply.dispatch_command(

@@ -62,7 +62,7 @@ class Database:
 
                 # 3. conversations
                 conversations_cols = """
-                    [sender_id] NVARCHAR(255) NOT NULL FOREIGN KEY REFERENCES user_preferences(user_id),
+                    [sender_id] NVARCHAR(255) NOT NULL ,
                     [receiver_id] NVARCHAR(255) NOT NULL,
                     [sender_role] NVARCHAR(50) NOT NULL,
                     [content] NVARCHAR(MAX) NOT NULL,
@@ -240,6 +240,7 @@ class Database:
                 logger.info(
                     "資料庫表格初始化/檢查完成 (已建立主鍵與外鍵約束)。"
                 )
+            self._ensure_system_user()
         except pyodbc.Error as e:
             logger.exception(f"資料庫初始化期間發生 pyodbc 錯誤: {e}")
             raise
@@ -260,6 +261,29 @@ class Database:
             logger.info(f"資料表 '{table_name}' 已建立。")
         else:
             logger.info(f"資料表 '{table_name}' 已存在，跳過建立。")
+
+    def _ensure_system_user(self):
+        """Ensure the system bot account exists for conversation history."""
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT COUNT(*) FROM user_preferences WHERE user_id = ?;",
+                    ("bot",),
+                )
+                if cursor.fetchone()[0] == 0:
+                    cursor.execute(
+                        """
+                        INSERT INTO user_preferences
+                            (user_id, language, role, is_admin, responsible_area,
+                             created_at, display_name, last_active)
+                        VALUES (?, ?, ?, 0, NULL, GETDATE(), ?, GETDATE());
+                        """,
+                        ("bot", "zh-Hant", "assistant", "System Bot"),
+                    )
+                    conn.commit()
+        except pyodbc.Error as e:
+            logger.exception(f"確保系統 bot 使用者存在時發生錯誤: {e}")
 
     def add_message(self, sender_id, receiver_id, sender_role, content):
         """加入一筆新的對話記錄（包含發送者角色）"""

@@ -22,7 +22,7 @@ class Config:
     DEBUG = os.getenv("FLASK_DEBUG", "False").lower() == "true"
     PORT = int(os.getenv("PORT", 443))
     # Ollama 設定
-    OLLAMA_HOST = os.getenv("OLLAMA_HOST", "127.0.0.1")
+    OLLAMA_HOST = os.getenv("OLLAMA_HOST", "120.105.18.33")
     OLLAMA_PORT = int(os.getenv("OLLAMA_PORT", 11434))
     OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "gpt-oss:20b")
     OLLAMA_TIMEOUT = os.getenv("OLLAMA_TIMEOUT", "30.0")
