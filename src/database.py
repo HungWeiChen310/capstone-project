@@ -55,7 +55,7 @@ class Database:
                     [equipment_id] NVARCHAR(255) NOT NULL PRIMARY KEY,
                     [name] NVARCHAR(255) NOT NULL,
                     [equipment_type] NVARCHAR(255) NULL,
-                    [status] NVARCHAR(255) NULL,
+                    [status] NVARCHAR(255) NOT NULL,
                     [last_updated] datetime2(2) NULL
                 """
                 self._create_table_if_not_exists(init_cur, "equipment", equipment_cols)
@@ -147,7 +147,7 @@ class Database:
                     [detected_anomaly_type] NVARCHAR(MAX) NOT NULL,
                     [downtime_sec] INT NULL,
                     [resolved_time] datetime2(2) NULL,
-                    [notes] NVARCHAR(MAX) NULL
+                    [severity_level] NVARCHAR(MAX) NULL
                 """
 
                 self._create_table_if_not_exists(init_cur, "error_logs", error_logs_cols)
@@ -536,7 +536,7 @@ class Database:
         sql_error_log = """
             INSERT INTO error_logs (
                 log_date, error_id, equipment_id, deformation_mm,
-                rpm, event_time, detected_anomaly_type, notes
+                rpm, event_time, detected_anomaly_type, severity_level
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?);
         """
         # 取得目前最大的 error_id，並加 1 作為新的 error_id
