@@ -26,18 +26,18 @@ plan = vn.get_training_plan_generic(df_information_schema)
 plan
 
 # If you like the plan, then uncomment this and run it to train
-# vn.train(plan=plan)
+vn.train(plan=plan)
 
 # The following are methods for adding training data. Make sure you modify the examples to match your database.
-"""
+
 # DDL statements are powerful because they specify table names, colume names, types, and potentially relationships
-vn.train(ddl=" ""
+vn.train(ddl="""
     CREATE TABLE IF NOT EXISTS my-table (
         id INT PRIMARY KEY,
         name VARCHAR(100),
         age INT
     )
-" "")
+""")
 
 # Sometimes you may want to add documentation about your business terminology or definitions.
 vn.train(documentation="Our business defines OTIF score as the percentage of orders that are delivered on time and in full")
@@ -52,8 +52,7 @@ training_data
 # You can remove training data if there's obsolete/incorrect information. 
 vn.remove_training_data(id='1-ddl')
 
-" ""## Asking the AI
+"""## Asking the AI
 Whenever you ask a new question, it will find the 10 most relevant pieces of training data and use it as part of the LLM prompt to generate the SQL.
-python"" "
+python"""
 vn.ask(question=...)
-"""
