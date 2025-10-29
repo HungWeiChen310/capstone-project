@@ -92,7 +92,7 @@ class Database:
                     [error_id] INT NOT NULL PRIMARY KEY,
                     [equipment_id] NVARCHAR(255) NOT NULL FOREIGN KEY REFERENCES equipment(equipment_id),
                     [alert_type] NVARCHAR(255) NULL,
-                    [severity] NVARCHAR(255) NULL,
+                    [severity_level] NVARCHAR(255) NULL,
                     [is_resolved] BIT NULL DEFAULT 0,
                     [created_time] datetime2(2) NULL,
                     [resolved_time] datetime2(2) NULL,
@@ -117,7 +117,6 @@ class Database:
                 self._create_table_if_not_exists(init_cur, "equipment_metrics", equipment_metrics_cols)
 
                 # 7. equipment_metric_thresholds
-                # --- 關鍵修正 2: 新增了 normal_value 欄位 ---
                 equipment_metric_thresholds_cols = """
                     [metric_type] NVARCHAR(50) NOT NULL PRIMARY KEY,
                     [normal_value] FLOAT NULL,
