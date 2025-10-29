@@ -271,7 +271,7 @@ def register_routes(app_instance):  # 傳入 app 實例
     def alarms():
         """接收警報訊息"""
         data = request.get_json(force=True, silent=True)
-        key = ("equipment_id", "alert_type", "severity")
+        key = ("equipment_id", "alert_type", "severity_level")
         if data and all(k in data for k in key):
             data["created_time"] = str(
                 datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -282,7 +282,7 @@ def register_routes(app_instance):  # 傳入 app 實例
             if subscribers:
                 message_text = (
                     f"設備 {equipment_id} 在 {data['created_time']} 時發生 {data['alert_type']} 警報，"  # 新增發生異常時間
-                    f"嚴重程度 {data['severity']}"
+                    f"嚴重程度 {data['severity_level']}。"
                 )
                 for user in subscribers:
                     send_notification(user, message_text)

@@ -6,7 +6,7 @@ def send_json():
     payload = {
         "equipment_id": "EQ003",
         "alert_type": "轉速過低",
-        "severity": "low",
+        "severity_level": "",
     }
     
     # 根據 alert_type 決定附加的欄位
