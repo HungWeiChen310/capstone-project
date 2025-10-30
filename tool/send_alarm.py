@@ -5,12 +5,12 @@ def send_json():
     url = 'https://127.0.0.1:443/alarms'
     payload = {
         "equipment_id": "EQ003",
-        "alert_type": "轉速過低",
+        "detected_anomaly_type": "轉速過低",
         "severity_level": "",
     }
-    
-    # 根據 alert_type 決定附加的欄位
-    if payload["alert_type"] == "轉速過低":
+
+    # 根據 detected_anomaly_type 決定附加的欄位
+    if payload["detected_anomaly_type"] == "轉速過低":
         """
         情境1:轉速太低
         正常值:30000 
@@ -22,7 +22,7 @@ def send_json():
         payload["rpm"] = 1500  # 填入實際轉速值
         payload["deformation_mm"] = 0  # 預設固定為0
 
-    elif payload["alert_type"] == "刀具裂痕" or payload["alert_type"] == "刀具變形":
+    elif payload["detected_anomaly_type"] == "刀具裂痕" or payload["detected_anomaly_type"] == "刀具變形":
         """
         情境2:刀具裂痕 or 刀具變形 (單位皆為mm)
         正常值:0

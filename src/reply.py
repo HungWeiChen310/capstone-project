@@ -152,7 +152,7 @@ def __equipment_status(db) -> TextMessage:
                 cursor.execute(
                     """
                     SELECT TOP 5 e.name, e.equipment_type, e.status, e.equipment_id,
-                                 ah.alert_type, ah.created_time
+                                 ah.detected_anomaly_type, ah.created_time
                     FROM equipment e
                     LEFT JOIN alert_history ah ON e.equipment_id = ah.equipment_id
                         AND ah.is_resolved = 0
@@ -522,7 +522,7 @@ def __equipment_details(text: str, db, user_id: str) -> TextMessage:
                         response_text += "暫無最新監測指標。\n"
                     cursor.execute(
                         """
-                        SELECT TOP 3 alert_type, severity_level, created_time, message
+                        SELECT TOP 3 detected_anomaly_type, severity_level, created_time, message
                         FROM alert_history
                         WHERE equipment_id = ? AND is_resolved = 0
                         ORDER BY created_time DESC;

@@ -36,13 +36,13 @@ vn.train(plan=plan)
 vn.train(ddl="""CREATE TABLE alert_history(
         [error_id] INT PRIMARY KEY, 
         [equipment_id] NVARCHAR(255), 
-        [alert_type] NVARCHAR(255), 
+        [detected_anomaly_type] NVARCHAR(255), 
         [created_time] datetime2(2))""")
 vn.train(documentation="要查詢「最近」通知，請使用 'created_time' 欄位並以 DESC 排序。")
 vn.train(documentation="查詢前五筆通知，在 SQL 中可使用 'TOP 5'")
 vn.train(documentation="若要篩選特定設備，請使用 WHERE 條件過濾 'equipment_id'。")
 vn.train(sql="""SELECT TOP 5 error_id, equipment_id,
-        alert_type,
+        detected_anomaly_type,
         created_time FROM alert_history
         WHERE equipment_id = 'EQ001'
         ORDER BY created_time DESC, error_id DESC
