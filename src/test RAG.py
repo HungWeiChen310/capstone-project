@@ -61,26 +61,30 @@ vn.train(sql="""SELECT name, equipment_id
         WHERE status != 'normal'
         """)
 
-# --- 情境 3：查詢EQ002 10月最多的故障類型 ---
+# --- 情境 3：查詢 EQ002 在 2025 年 10 月三種異常的各類型時數 ---
 vn.train(ddl="""CREATE TABLE error_logs (
         [log_date] DATE NOT NULL,
-        [equipment_id] NVARCHAR(255) NOT NULL FOREIGN KEY REFERENCES equipment(equipment_id),
-        [detected_anomaly_type] NVARCHAR(MAX) NOT NULL
-        )""")
-vn.train(documentation=" 'detected_anomaly_type' 欄位是「故障類型」。")
-vn.train(documentation="要查詢10月的資料，log_date 欄位需要在 '2023-10-01' 和 '2023-11-01' 之間。")
-vn.train(documentation="要找出「最多」或「最常發生」的類型，必須使用 COUNT(*) 和 GROUP BY。")
-vn.train(documentation="使用 ORDER BY COUNT(*) DESC 來排序，並用 TOP 1 取得次數最多的那筆。")
-vn.train(sql="""
-        SELECT TOP 1 detected_anomaly_type, COUNT(*) AS total_count
+        [equipment_id] NVARCHAR(255) NOT NULL,
+        [detected_anomaly_type] NVARCHAR(MAX) NOT NULL,
+        [downtime_sec] INT NULL
+    )""")
+vn.train(documentation=" 'downtime_sec' 欄位是「故障時數」或「停機時間」，單位是「秒」。")
+vn.train(documentation="要計算「加總時數」或「總時長」，必須使用 SUM(downtime_sec)。")
+vn.train(documentation="要查詢「各種類型」的時數，必須 GROUP BY detected_anomaly_type。")
+vn.train(documentation="要查詢2025年10月的資料，log_date 欄位需要在 '2025-10-01' 和 '2025-11-01' 之間。")
+
+vn.train(
+    sql="""
+        SELECT detected_anomaly_type,
+               SUM(ISNULL(downtime_sec, 0)) AS total_downtime_sec
         FROM error_logs
-        WHERE 
-            equipment_id = 'EQ002' 
-            AND log_date >= '2023-10-01' 
-            AND log_date < '2023-11-01'
+        WHERE equipment_id = 'EQ002'
+          AND log_date >= '2025-10-01' AND log_date < '2025-11-01'
+          AND detected_anomaly_type IN (N'轉速太低', N'刀具裂痕', N'刀具變形')
         GROUP BY detected_anomaly_type
-        ORDER BY total_count DESC, detected_anomaly_type ASC
-        """)
+        ORDER BY detected_anomaly_type
+    """
+)
 
 # At any time you can inspect what training data the package is able to reference
 training_data = vn.get_training_data()
@@ -89,5 +93,6 @@ training_data
 """## Asking the AI
 Whenever you ask a new question, it will find the 10 most relevant pieces of training data and use it as part of the LLM prompt to generate the SQL.
 python"""
-results = vn.ask(question="請幫我列出EQ001近五個異常通知")
+
+results = vn.ask(question="EQ001 在 2025 年 10 月三種異常的各類型的時間，用分鐘+秒為單位")
 print(results)
