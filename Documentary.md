@@ -76,23 +76,22 @@
 
 ```
 .
-├── src/
-│   ├── __init__.py               # Python 包初始化檔案
-│   ├── app.py                    # Flask 應用程式創建與配置
-│   ├── config.py                 # 集中式配置管理模組
-│   ├── main.py                   # 核心業務邏輯與 OpenAI 服務封裝
-│   ├── linebot_connect.py        # LINE Bot 事件處理與路由註冊
-│   ├── database.py               # 資料庫互動模組
-│   ├── analytics.py              # 數據分析與統計模組
-│   ├── equipment_monitor.py      # 半導體設備監控與異常偵測器
+├── app.py                      # Flask 應用程式進入點
+├── src/                          # 主要源碼
+│   ├── __init__.py               # Python 包初始化
+│   ├── routes/                   # 路由模組 (Blueprints)
+│   ├── services/                 # 業務邏輯模組
+│   ├── utils.py                  # 工具函數
+│   ├── config.py                 # 集中式配置管理
+│   ├── main.py                   # 核心邏輯與 OpenAI 服務
+│   ├── linebot_connect.py        # LINE Bot 事件處理
+│   ├── database.py               # 資料庫操作
+│   ├── analytics.py              # 數據分析模組
+│   ├── equipment_monitor.py      # 設備監控與異常偵測
 │   ├── equipment_scheduler.py    # 設備監控排程器
 │   ├── event_system.py           # 事件發布/訂閱系統
-│   └── initial_data.py           # 初始設備資料生成腳本
-├── templates/
-│   ├── index.html                # 服務狀態頁面
-│   ├── admin_dashboard.html      # 管理後台儀表板
-│   ├── admin_login.html          # 管理員登入頁面
-│   └── admin_conversation.html   # 對話記錄查詢頁面
+│   └── initial_data.py           # 初始資料生成
+├── templates/                    # HTML 模板
 ├── .github/
 │   └── workflows/
 │       └── main.yml              # GitHub Actions CI/CD 設定檔

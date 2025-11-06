@@ -26,10 +26,13 @@
 
 ```
 .
+├── app.py                      # Flask 應用程式進入點
 ├── src/                          # 主要源碼
 │   ├── __init__.py               # Python 包初始化
-│   ├── app.py                    # Flask 應用程式創建與配置
-│   ├── config.py                 # 集中式配置管理模組
+│   ├── routes/                   # 路由模組 (Blueprints)
+│   ├── services/                 # 業務邏輯模組
+│   ├── utils.py                  # 工具函數
+│   ├── config.py                 # 集中式配置管理
 │   ├── main.py                   # 核心邏輯與 OpenAI 服務
 │   ├── linebot_connect.py        # LINE Bot 事件處理
 │   ├── database.py               # 資料庫操作
