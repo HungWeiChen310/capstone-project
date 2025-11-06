@@ -27,4 +27,4 @@ RUN chown -R appuser:appuser /app
 USER appuser
 
 # 指定容器啟動時執行的指令
-CMD ["python", "-m", "src.linebot_connect"]
+CMD ["python", "app.py"]

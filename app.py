@@ -1,4 +1,4 @@
-# src/app.py
+# app.py
 import logging
 import os
 import sys
@@ -6,12 +6,12 @@ from flask import Flask
 from flask_talisman import Talisman
 from werkzeug.middleware.proxy_fix import ProxyFix
 
-from .config import Config
-from .initial_data import import_data_from_excel
-from .utils import get_or_create_secret_key
-from .routes import register_blueprints
-from .linebot_connect import get_handler
-from .routes.main import set_handler
+from src.config import Config
+from src.initial_data import import_data_from_excel
+from src.utils import get_or_create_secret_key
+from src.routes import register_blueprints
+from src.linebot_connect import get_handler
+from src.routes.main import set_handler
 
 logger = logging.getLogger(__name__)
 
@@ -32,12 +32,8 @@ def create_app(testing=False):
         # 初始化 Flask 應用
         app = Flask(
             __name__,
-            template_folder=os.path.join(
-                os.path.dirname(os.path.dirname(__file__)), "templates"
-            ),
-            static_folder=os.path.join(
-                os.path.dirname(os.path.dirname(__file__)), "static"
-            ),
+            template_folder="templates",
+            static_folder="static"
         )
 
         # 設定密鑰

@@ -143,7 +143,7 @@
 1. **本地執行**  
    啟動 Flask 應用：
    ```bash
-   python -m src.app
+   python app.py
    ```
    - LINE Webhook 接收端點為 `/callback`
    - 服務狀態頁面：`https://localhost:5000/`

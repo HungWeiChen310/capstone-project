@@ -94,7 +94,7 @@ pip install -r requirements.txt
 ### 本地開發
 
 ```bash
-python -m src.app
+python app.py
 ```
 
 ### Docker 部署
