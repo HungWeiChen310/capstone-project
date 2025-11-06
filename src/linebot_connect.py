@@ -364,13 +364,13 @@ def register_routes(app_instance):  # 傳入 app 實例
 register_routes(app)
 
 
-@handler.add(MessageEvent, message=TextMessageContent)
-def handle_message(event):
+def process_message_in_background(event):
+    """在背景處理耗時的訊息回覆"""
     text = event.message.text.strip()
     text_lower = text.lower()
-    user_id = event.source.user_id  # 獲取 user_id
+    user_id = event.source.user_id
 
-    db.get_user_preference(user_id)  # 如果不存在，會在 get_user_preference 中創建
+    db.get_user_preference(user_id)
 
     reply_message_obj = reply.dispatch_command(
         text_lower, db, user_id
@@ -406,6 +406,12 @@ def handle_message(event):
                 "未知命令回覆失敗且推播失敗，使用者 %s",
                 user_id,
             )
+
+
+@handler.add(MessageEvent, message=TextMessageContent)
+def handle_message(event):
+    thread = threading.Thread(target=process_message_in_background, args=(event,))
+    thread.start()
 
 
 def send_notification(user_id_to_notify, message_text):
