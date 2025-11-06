@@ -1,14 +1,10 @@
 import os
-import sys
 import pytest  # Third-party import
-
-# Ensure src is in path for imports if tests are run from repository root
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
 # Prevent configuration validation from exiting during import
 os.environ["TESTING"] = "True"
 
-from main import sanitize_input  # Local application import
+from src.main import sanitize_input  # Local application import
 
 
 @pytest.mark.parametrize("test_input,expected", [

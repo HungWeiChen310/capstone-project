@@ -1,15 +1,11 @@
 import os
-import sys
 from unittest.mock import patch  # Standard library
-
-# Ensure src is in path for imports if tests are run from repository root
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
 # Tell the application code we are running in testing mode so configuration
 # validation does not abort the interpreter on import.
 os.environ["TESTING"] = "True"
 
-from config import Config  # Local application import
+from src.config import Config  # Local application import
 
 
 def test_config_default_values():

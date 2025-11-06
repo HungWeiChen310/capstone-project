@@ -2,7 +2,7 @@ import logging
 import os
 import pyodbc
 import datetime
-from config import Config
+from .config import Config
 
 
 logger = logging.getLogger(__name__)

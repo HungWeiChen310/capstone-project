@@ -3,11 +3,11 @@ import os
 import re
 import time
 import requests
-from database import db
-from rag import get_default_knowledge_base
+from .database import db
+from .rag import get_default_knowledge_base
 from vanna.ollama import Ollama
 from vanna.chromadb import ChromaDB_VectorStore
-from config import Config
+from .config import Config
 import sys
 sys.stdout.reconfigure(encoding='utf-8')
 
@@ -380,26 +380,3 @@ def reply_message(event):
     ollama_service = OllamaService(message=user_message, user_id=user_id)
     response = ollama_service.get_response()
     return response
-
-
-# 如果直接執行此檔案，則啟動 Flask 應用
-if __name__ == "__main__":
-    # 避免循環引用問題
-    import importlib.util
-    import sys
-    spec = importlib.util.spec_from_file_location(
-        "linebot_connect", os.path.join(os.path.dirname(__file__), "linebot_connect.py")
-    )
-    linebot_connect = importlib.util.module_from_spec(spec)
-    sys.modules["linebot_connect"] = linebot_connect
-    spec.loader.exec_module(linebot_connect)
-    port = int(os.environ.get("PORT", os.getenv("HTTPS_PORT", 443)))
-    linebot_connect.app.run(
-        ssl_context=(
-            os.environ.get('SSL_CERT_PATH', 'certs/capstone-project.me-chain.pem'),
-            os.environ.get('SSL_KEY_PATH', 'certs/capstone-project.me-key.pem')
-        ),
-        host=os.environ.get("HOST", "0.0.0.0"),
-        port=port,
-        debug=False,
-    )

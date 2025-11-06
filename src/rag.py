@@ -13,7 +13,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 import pyodbc
-import database
+from . import database
 
 
 logger = logging.getLogger(__name__)
