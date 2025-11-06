@@ -5,6 +5,29 @@ import time
 import requests
 from database import db
 from rag import get_default_knowledge_base
+from vanna.ollama import Ollama
+from vanna.chromadb import ChromaDB_VectorStore
+from config import Config
+import sys
+sys.stdout.reconfigure(encoding='utf-8')
+
+
+class DBVanna(ChromaDB_VectorStore, Ollama):
+    def __init__(self, config=None):
+        ChromaDB_VectorStore.__init__(self, config=config)
+        Ollama.__init__(self, config=config)
+ 
+vn = DBVanna(config={'model': 'gpt-oss:20b'})
+resolved_server = Config.DB_SERVER
+resolved_database = Config.DB_NAME
+connection_string = (
+    "DRIVER={ODBC Driver 17 for SQL Server};"
+    f"SERVER={resolved_server};"
+    f"DATABASE={resolved_database};"
+    "Trusted_Connection=yes;"
+        )
+vn.connect_to_mssql(odbc_conn_str=connection_string)
+
 
 
 def sanitize_input(text):
@@ -35,7 +58,8 @@ def get_system_prompt(language="zh-Hant"):
     system_prompts = {
         "zh-Hant": """你是一個專業的技術顧問，專注於提供工程相關問題的解答。回答應該具體、實用且易於理解。
                    請優先使用繁體中文回覆，除非使用者以其他語言提問。
-                   提供的建議應包含實踐性的步驟和解決方案。如果不確定答案，請誠實表明。""",
+                   提供的建議應包含實踐性的步驟和解決方案。如果不確定答案，請誠實表明。
+                   禁止使用任何形式的代碼塊標記（如```）和emoji來回覆內容，直接以純文字形式提供回答。""",
         "zh-Hans": """你是一个专业的技术顾问，专注于提供工程相关问题的解答。回答应该具体、实用且易于理解。
                     请优先使用简体中文回复，除非用户以其他语言提问。
                     提供的建议应包含实践性的步骤和解决方案。如果不确定答案，请诚实表明。""",
@@ -344,10 +368,17 @@ def reply_message(event):
     user_message = event.message.text
     user_id = event.source.user_id
     # 使用 Ollama 服務產生回應
-    logging.info(f"Received message from user {user_id}: {user_message}")
+    try:
+        logging.info(f"生成 SQL 查詢以回應用戶的訊息")
+        sql = vn.generate_sql(user_message,allow_llm_to_see_data=True)
+        logging.info(f"執行 SQL 查詢: {sql}")
+        df = vn.run_sql(sql)
+        if df is not None or df.empty:
+            user_message += f"\n根據以下查詢結果提供回答：\n{df.to_string(index=False)}"
+    except:
+        pass
     ollama_service = OllamaService(message=user_message, user_id=user_id)
     response = ollama_service.get_response()
-    logging.info(f"Response from Ollama service for user {user_id}: {response}")
     return response
 
 
