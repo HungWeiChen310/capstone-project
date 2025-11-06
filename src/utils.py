@@ -5,6 +5,8 @@ import logging
 import time
 from collections import defaultdict
 import threading
+from datetime import date, datetime
+from decimal import Decimal
 
 logger = logging.getLogger(__name__)
 
@@ -71,3 +73,16 @@ def rate_limit_check(ip, max_requests=30, window_seconds=60):
             return False
         request_counts[ip].append(current_time)
         return True
+
+def _format_value(value: object) -> str:
+    """Formats a database value into a consistent string representation."""
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (datetime, date)):
+        return value.strftime("%Y-%m-%d %H:%M:%S")
+    if isinstance(value, Decimal):
+        normalized = format(value, "f")
+        return normalized.rstrip("0").rstrip(".") if "." in normalized else normalized
+    return str(value).strip()
