@@ -51,14 +51,14 @@ TABLE_CONFIGS = [
     {
         "excel_sheet_name": "alert_history",
         "sql_table_name": "alert_history",
-        "sql_columns": ["error_id", "equipment_id", "alert_type", "severity",
+        "sql_columns": ["error_id", "equipment_id", "detected_anomaly_type", "severity_level",
                         "is_resolved", "created_time", "resolved_time",
                         "resolved_by", "resolution_notes"],
         "transform_row_data": lambda row: (
             row.get('error_id'),
             row.get('equipment_id'),
-            row.get('alert_type'),
-            row.get('severity'),
+            row.get('detected_anomaly_type'),
+            row.get('severity_level'),
             row.get('is_resolved'),
             pd.to_datetime(row.get('created_time')) if pd.notna(row.get('created_time')) else None,
             pd.to_datetime(row.get('resolved_time')) if pd.notna(row.get('resolved_time')) else None,
@@ -126,12 +126,12 @@ TABLE_CONFIGS = [
         "excel_sheet_name": "stats_operational_monthly",
         "sql_table_name": "stats_operational_monthly",
         "sql_columns": ["equipment_id", "year", "month",
-                        "total_operation_hrs", "downtime_hrs",
+                        "total_operation_hrs", "downtime_sec",
                         "downtime_rate_percent", "notes"],
         "transform_row_data": lambda row: (
             str(row.get('equipment_id')), int(row.get('year')), int(row.get('month')),
             int(row.get('total_operation_hrs')) if pd.notna(row.get('total_operation_hrs')) else None,
-            float(row.get('downtime_hrs')) if pd.notna(row.get('downtime_hrs')) else None,
+            int(row.get('downtime_sec')) if pd.notna(row.get('downtime_sec')) else None,
             str(row.get('downtime_rate_percent')) if pd.notna(row.get('downtime_rate_percent')) else None,
             str(row.get('notes')) if pd.notna(row.get('notes')) else None
         )
@@ -140,12 +140,12 @@ TABLE_CONFIGS = [
         "excel_sheet_name": "stats_operational_quarterly",
         "sql_table_name": "stats_operational_quarterly",
         "sql_columns": ["equipment_id", "year", "quarter",
-                        "total_operation_hrs", "downtime_hrs",
+                        "total_operation_hrs", "downtime_sec",
                         "downtime_rate_percent", "notes"],
         "transform_row_data": lambda row: (
             str(row.get('equipment_id')), row.get('year'), row.get('quarter'),
             int(row.get('total_operation_hrs')) if pd.notna(row.get('total_operation_hrs')) else None,
-            float(row.get('downtime_hrs')) if pd.notna(row.get('downtime_hrs')) else None,
+            int(row.get('downtime_sec')) if pd.notna(row.get('downtime_sec')) else None,
             str(row.get('downtime_rate_percent')) if pd.notna(row.get('downtime_rate_percent')) else None,
             str(row.get('notes')) if pd.notna(row.get('notes')) else None
         )
@@ -154,12 +154,12 @@ TABLE_CONFIGS = [
         "excel_sheet_name": "stats_operational_yearly",
         "sql_table_name": "stats_operational_yearly",
         "sql_columns": ["equipment_id", "year", "total_operation_hrs",
-                        "downtime_hrs", "downtime_rate_percent",
+                        "downtime_sec", "downtime_rate_percent",
                         "notes"],
         "transform_row_data": lambda row: (
             str(row.get('equipment_id')), row.get('year'),
             int(row.get('total_operation_hrs')) if pd.notna(row.get('total_operation_hrs')) else None,
-            float(row.get('downtime_hrs')) if pd.notna(row.get('downtime_hrs')) else None,
+            int(row.get('downtime_sec')) if pd.notna(row.get('downtime_sec')) else None,
             str(row.get('downtime_rate_percent')) if pd.notna(row.get('downtime_rate_percent')) else None,
             str(row.get('notes')) if pd.notna(row.get('notes')) else None
         )
@@ -168,13 +168,13 @@ TABLE_CONFIGS = [
         "excel_sheet_name": "stats_abnormal_monthly",
         "sql_table_name": "stats_abnormal_monthly",
         "sql_columns": ["equipment_id", "year", "month",
-                        "detected_anomaly_type", "total_operation_hrs", "downtime_hrs",
+                        "detected_anomaly_type", "total_operation_hrs", "downtime_sec",
                         "downtime_rate_percent", "notes"],
         "transform_row_data": lambda row: (
             str(row.get('equipment_id')), int(row.get('year')), int(row.get('month')),
             str(row.get('detected_anomaly_type')) if row.get('detected_anomaly_type') else 'default_anomaly_type',
             int(row.get('total_operation_hrs')) if pd.notna(row.get('total_operation_hrs')) else None,
-            float(row.get('downtime_hrs')) if pd.notna(row.get('downtime_hrs')) else None,
+            int(row.get('downtime_sec')) if pd.notna(row.get('downtime_sec')) else None,
             float(row.get('downtime_rate_percent')) if pd.notna(row.get('downtime_rate_percent')) else None,
             str(row.get('notes')) if pd.notna(row.get('notes')) else None
         )
@@ -183,13 +183,13 @@ TABLE_CONFIGS = [
         "excel_sheet_name": "stats_abnormal_quarterly",
         "sql_table_name": "stats_abnormal_quarterly",
         "sql_columns": ["equipment_id", "year", "quarter",
-                        "detected_anomaly_type", "total_operation_hrs", "downtime_hrs",
+                        "detected_anomaly_type", "total_operation_hrs", "downtime_sec",
                         "downtime_rate_percent", "notes"],
         "transform_row_data": lambda row: (
             str(row.get('equipment_id')), row.get('year'), row.get('quarter'),
             str(row.get('detected_anomaly_type')) if row.get('detected_anomaly_type') else 'default_anomaly_type',
             int(row.get('total_operation_hrs')) if pd.notna(row.get('total_operation_hrs')) else None,
-            float(row.get('downtime_hrs')) if pd.notna(row.get('downtime_hrs')) else None,
+            int(row.get('downtime_sec')) if pd.notna(row.get('downtime_sec')) else None,
             str(row.get('downtime_rate_percent')) if pd.notna(row.get('downtime_rate_percent')) else None,
             str(row.get('notes')) if pd.notna(row.get('notes')) else None
         )
@@ -198,13 +198,13 @@ TABLE_CONFIGS = [
         "excel_sheet_name": "stats_abnormal_yearly",
         "sql_table_name": "stats_abnormal_yearly",
         "sql_columns": ["equipment_id", "year", "detected_anomaly_type",
-                        "total_operation_hrs", "downtime_hrs", "downtime_rate_percent",
+                        "total_operation_hrs", "downtime_sec", "downtime_rate_percent",
                         "notes"],
         "transform_row_data": lambda row: (
             str(row.get('equipment_id')), row.get('year'),
             str(row.get('detected_anomaly_type')) if row.get('detected_anomaly_type') else 'default_anomaly_type',
             int(row.get('total_operation_hrs')) if pd.notna(row.get('total_operation_hrs')) else None,
-            float(row.get('downtime_hrs')) if pd.notna(row.get('downtime_hrs')) else None,
+            int(row.get('downtime_sec')) if pd.notna(row.get('downtime_sec')) else None,
             str(row.get('downtime_rate_percent')) if pd.notna(row.get('downtime_rate_percent')) else None,
             str(row.get('notes')) if pd.notna(row.get('notes')) else None
         )

@@ -207,13 +207,13 @@ class RAGKnowledgeBase:
                 "source_tag": "mssql:alert_history",
                 "query": (
                     "SELECT ah.error_id, ah.equipment_id, e.name AS equipment_name, "
-                    "ah.alert_type, ah.severity, ah.is_resolved, ah.created_time, "
+                    "ah.detected_anomaly_type, ah.severity_level, ah.is_resolved, ah.created_time, "
                     "ah.resolved_time, ah.resolved_by, ah.resolution_notes "
                     "FROM alert_history AS ah "
                     "LEFT JOIN equipment AS e ON ah.equipment_id = e.equipment_id"
                 ),
                 "id_columns": ("error_id", "equipment_id"),
-                "text_columns": ("equipment_name", "alert_type", "severity", "resolution_notes"),
+                "text_columns": ("equipment_name", "detected_anomaly_type", "severity_level", "resolution_notes"),
                 "meta_columns": ("is_resolved", "created_time", "resolved_time", "resolved_by"),
             },
             {
@@ -235,13 +235,13 @@ class RAGKnowledgeBase:
                 "source_tag": "mssql:error_logs",
                 "query": (
                     "SELECT el.error_id, el.equipment_id, e.name AS equipment_name, "
-                    "el.detected_anomaly_type, el.notes, el.log_date, el.event_time, "
+                    "el.detected_anomaly_type, el.severity_level, el.log_date, el.event_time, "
                     "el.resolved_time, el.downtime_sec "
                     "FROM error_logs AS el "
                     "LEFT JOIN equipment AS e ON el.equipment_id = e.equipment_id"
                 ),
                 "id_columns": ("error_id", "equipment_id"),
-                "text_columns": ("equipment_name", "detected_anomaly_type", "notes"),
+                "text_columns": ("equipment_name", "detected_anomaly_type", "severity_level"),
                 "meta_columns": ("log_date", "event_time", "resolved_time", "downtime_sec"),
             },
         ]

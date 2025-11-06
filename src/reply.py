@@ -152,7 +152,7 @@ def __equipment_status(db) -> TextMessage:
                 cursor.execute(
                     """
                     SELECT TOP 5 e.name, e.equipment_type, e.status, e.equipment_id,
-                                 ah.alert_type, ah.created_time
+                                 ah.detected_anomaly_type, ah.created_time
                     FROM equipment e
                     LEFT JOIN alert_history ah ON e.equipment_id = ah.equipment_id
                         AND ah.is_resolved = 0
@@ -522,7 +522,7 @@ def __equipment_details(text: str, db, user_id: str) -> TextMessage:
                         response_text += "暫無最新監測指標。\n"
                     cursor.execute(
                         """
-                        SELECT TOP 3 alert_type, severity, created_time, message
+                        SELECT TOP 3 detected_anomaly_type, severity_level, created_time, message
                         FROM alert_history
                         WHERE equipment_id = ? AND is_resolved = 0
                         ORDER BY created_time DESC;
@@ -531,12 +531,12 @@ def __equipment_details(text: str, db, user_id: str) -> TextMessage:
                     alerts = cursor.fetchall()
                     if alerts:
                         response_text += "\n⚠️ 未解決的警報：\n"
-                        for alert_t, severity, alert_time, _ in alerts:  # msg_content not used
+                        for alert_t, severity_level, alert_time, _ in alerts:  # msg_content not used
                             sev_emoji = {
                                 "warning": "⚠️", "critical": "🔴", "emergency": "🚨"
-                            }.get(severity, "ℹ️")
+                            }.get(severity_level, "ℹ️")
                             response_text += (
-                                f"  {sev_emoji} {alert_t} ({severity}) "
+                                f"  {sev_emoji} {alert_t} ({severity_level}) "
                                 f"於 {alert_time.strftime('%Y-%m-%d %H:%M')}\n"
                             )
                     else:
