@@ -158,7 +158,7 @@ class Database:
                     [month] INT NOT NULL,
                     [detected_anomaly_type] NVARCHAR(255) NOT NULL,
                     [total_operation_hrs] INT NULL,
-                    [downtime_hrs] FLOAT NULL,
+                    [downtime_sec] INT NULL,
                     [downtime_rate_percent] NVARCHAR(255) NULL,
                     [notes] NVARCHAR(MAX) NULL,
                     PRIMARY KEY (equipment_id, year, month, detected_anomaly_type)
@@ -172,7 +172,7 @@ class Database:
                     [quarter] INT NOT NULL,
                     [detected_anomaly_type] NVARCHAR(255) NOT NULL,
                     [total_operation_hrs] INT NULL,
-                    [downtime_hrs] FLOAT NULL,
+                    [downtime_sec] INT NULL,
                     [downtime_rate_percent] NVARCHAR(255) NULL,
                     [notes] NVARCHAR(MAX) NULL,
                     PRIMARY KEY (equipment_id, year, quarter, detected_anomaly_type)
@@ -185,7 +185,7 @@ class Database:
                     [year] INT NOT NULL,
                     [detected_anomaly_type] NVARCHAR(255) NOT NULL,
                     [total_operation_hrs] INT NULL,
-                    [downtime_hrs] FLOAT NULL,
+                    [downtime_sec] INT NULL,
                     [downtime_rate_percent] NVARCHAR(255) NULL,
                     [notes] NVARCHAR(MAX) NULL,
                     PRIMARY KEY (equipment_id, year, detected_anomaly_type)
@@ -198,7 +198,7 @@ class Database:
                     [year] INT NOT NULL,
                     [month] INT NOT NULL,
                     [total_operation_hrs] INT NULL,
-                    [downtime_hrs] FLOAT NULL,
+                    [downtime_sec] INT NULL,
                     [downtime_rate_percent] NVARCHAR(255) NULL,
                     [notes] NVARCHAR(MAX) NULL,
                     PRIMARY KEY (equipment_id, year, month)
@@ -211,7 +211,7 @@ class Database:
                     [year] INT NOT NULL,
                     [quarter] INT NOT NULL,
                     [total_operation_hrs] INT NULL,
-                    [downtime_hrs] FLOAT NULL,
+                    [downtime_sec] INT NULL,
                     [downtime_rate_percent] NVARCHAR(255) NULL,
                     [notes] NVARCHAR(MAX) NULL,
                     PRIMARY KEY (equipment_id, year, quarter)
@@ -227,7 +227,7 @@ class Database:
                     [equipment_id] NVARCHAR(255) NOT NULL,
                     [year] INT NOT NULL,
                     [total_operation_hrs] INT NULL,
-                    [downtime_hrs] FLOAT NULL,
+                    [downtime_sec] INT NULL,
                     [downtime_rate_percent] NVARCHAR(255) NULL,
                     [notes] NVARCHAR(MAX) NULL,
                     PRIMARY KEY (equipment_id, year),

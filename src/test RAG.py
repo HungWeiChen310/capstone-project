@@ -32,57 +32,81 @@ vn.train(plan=plan)
 
 # DDL statements are powerful because they specify table names, colume names, types, and potentially relationships
 
-#--- 情境 1：查詢 EQ001 的近五個異常通知 ---
-vn.train(ddl="""CREATE TABLE alert_history(
-        [error_id] INT PRIMARY KEY, 
-        [equipment_id] NVARCHAR(255), 
-        [detected_anomaly_type] NVARCHAR(255), 
-        [created_time] datetime2(2))""")
-vn.train(documentation="要查詢「最近」通知，請使用 'created_time' 欄位並以 DESC 排序。")
-vn.train(documentation="查詢前五筆通知，在 SQL 中可使用 'TOP 5'")
-vn.train(documentation="若要篩選特定設備，請使用 WHERE 條件過濾 'equipment_id'。")
-vn.train(sql="""SELECT TOP 5 error_id, equipment_id,
-        detected_anomaly_type,
-        created_time FROM alert_history
-        WHERE equipment_id = 'EQ001'
-        ORDER BY created_time DESC, error_id DESC
+#--- 情境 1：查詢查詢EQ003在2025年整年三種異常的各類型時數 ---
+vn.train(ddl="""CREATE TABLE stats_abnormal_yearly (
+        [equipment_id] NVARCHAR(255) NOT NULL FOREIGN KEY REFERENCES equipment(equipment_id),
+        [year] INT NOT NULL,
+        [detected_anomaly_type] NVARCHAR(255) NOT NULL,
+        [downtime_sec] INT NULL,""")
+vn.train(documentation="如果要查詢EQ003設備的資料，equipment_id 欄位必須為 'EQ003'。")
+vn.train(documentation=" 'downtime_sec' 欄位是「故障時數」或「停機時間」，單位是「秒」。")
+vn.train(documentation="要計算「加總時數」或「總時長」，必須使用 SUM(downtime_sec)。")
+vn.train(documentation="detected_anomaly_type 是用來識別異常類型的欄位。")
+vn.train(documentation="detected_anomaly_type 有三個異常情況，分別是：轉速太低、刀具裂痕、刀具變形。")
+vn.train(documentation="若是查詢整年的資料，year欄位要等於2025。")
+vn.train(sql="""SELECT detected_anomaly_type,
+               SUM(downtime_sec) AS total_downtime_sec
+        FROM stats_abnormal_yearly
+        WHERE equipment_id = 'EQ003'
+          AND year = 2025
+          AND detected_anomaly_type IN (N'轉速太低', N'刀具裂痕', N'刀具變形')
+        GROUP BY detected_anomaly_type
+        ORDER BY detected_anomaly_type
         """)
 
-# --- 情境 2：查詢所有「故障中」的機器 ---
-vn.train(ddl="""CREATE TABLE equipment (
-        [equipment_id] NVARCHAR(255) NOT NULL PRIMARY KEY,
-        [name] NVARCHAR(255) NOT NULL,
-        [status] NVARCHAR(255) NOT NULL
-        )""")
-vn.train(documentation="如果 status 不是 'normal'，代表設備異常或故障。")
-vn.train(documentation="查詢異常中的設備可使用 WHERE 過濾 status 欄位。")
-vn.train(sql="""SELECT name, equipment_id 
-        FROM equipment
-        WHERE status != 'normal'
+# --- 情境 2：查詢EQ003在2025年1~3月(第一季)三種異常的各類型時數 ---
+vn.train(ddl="""CREATE TABLE stats_abnormal_quarterly (
+        [equipment_id] NVARCHAR(255) NOT NULL FOREIGN KEY REFERENCES equipment(equipment_id),
+        [year] INT NOT NULL,
+        [quarter] INT NOT NULL,
+        [detected_anomaly_type] NVARCHAR(255) NOT NULL,
+        [downtime_sec] INT NULL,
+    )""")
+vn.train(documentation="如果要查詢EQ003設備的資料，equipment_id 欄位必須為 'EQ003'。")
+vn.train(documentation=" 'downtime_sec' 欄位是「故障時數」或「停機時間」，單位是「秒」。")
+vn.train(documentation="要計算「加總時數」或「總時長」，必須使用 SUM(downtime_sec)。")
+vn.train(documentation="detected_anomaly_type 是用來識別異常類型的欄位。")
+vn.train(documentation="detected_anomaly_type 有三個異常情況，分別是：轉速太低、刀具裂痕、刀具變形。")
+vn.train(documentation="要查詢2025年第一季的資料，year欄位要等於2025，quarter欄位要等於1。")
+vn.train(documentation="要查詢2025年1至3月的資料，year欄位要等於2025，quarter欄位要等於1。")
+vn.train(documentation="要查詢2025年4至6月的資料，year欄位要等於2025，quarter欄位要等於2。")
+vn.train(documentation="要查詢2025年7至9月的資料，year欄位要等於2025，quarter欄位要等於3。")
+vn.train(documentation="要查詢2025年10至12月的資料，year欄位要等於2025，quarter欄位要等於4。")
+vn.train(sql="""SELECT detected_anomaly_type,
+               SUM(downtime_sec) AS total_downtime_sec
+        FROM stats_abnormal_quarterly
+        WHERE equipment_id = 'EQ003'
+          AND year = 2025 AND quarter = 1
+          AND detected_anomaly_type IN (N'轉速太低', N'刀具裂痕', N'刀具變形')
+        GROUP BY detected_anomaly_type
+        ORDER BY detected_anomaly_type
         """)
 
 # --- 情境 3：查詢 EQ002 在 2025 年 10 月三種異常的各類型時數 ---
-vn.train(ddl="""CREATE TABLE error_logs (
-        [log_date] DATE NOT NULL,
-        [equipment_id] NVARCHAR(255) NOT NULL,
-        [detected_anomaly_type] NVARCHAR(MAX) NOT NULL,
-        [downtime_sec] INT NULL
+vn.train(ddl="""CREATE TABLE stats_abnormal_monthly (
+        [equipment_id] NVARCHAR(255) NOT NULL FOREIGN KEY REFERENCES equipment(equipment_id),
+        [year] INT NOT NULL,
+        [month] INT NOT NULL,
+        [detected_anomaly_type] NVARCHAR(255) NOT NULL,
+        [total_operation_hrs] INT NULL,
+        [downtime_sec] INT NULL,
     )""")
+vn.train(documentation="如果要查詢EQ002設備的資料，equipment_id 欄位必須為 'EQ002'。")
 vn.train(documentation=" 'downtime_sec' 欄位是「故障時數」或「停機時間」，單位是「秒」。")
 vn.train(documentation="要計算「加總時數」或「總時長」，必須使用 SUM(downtime_sec)。")
-vn.train(documentation="要查詢「各種類型」的時數，必須 GROUP BY detected_anomaly_type。")
-vn.train(documentation="要查詢2025年10月的資料，log_date 欄位需要在 '2025-10-01' 和 '2025-11-01' 之間。")
+vn.train(documentation="detected_anomaly_type 是用來識別異常類型的欄位。")
+vn.train(documentation="detected_anomaly_type 有三個異常情況，分別是：轉速太低、刀具裂痕、刀具變形。")
+vn.train(documentation="要查詢2025年10月的資料，year欄位要等於2025，month欄位要等於10。")
 
 vn.train(
     sql="""
         SELECT detected_anomaly_type,
-               SUM(ISNULL(downtime_sec, 0)) AS total_downtime_sec
-        FROM error_logs
+               SUM(downtime_sec) AS total_downtime_sec
+        FROM stats_abnormal_monthly
         WHERE equipment_id = 'EQ002'
-          AND log_date >= '2025-10-01' AND log_date < '2025-11-01'
+          AND year = 2025 AND month = 10
           AND detected_anomaly_type IN (N'轉速太低', N'刀具裂痕', N'刀具變形')
         GROUP BY detected_anomaly_type
-        ORDER BY detected_anomaly_type
     """
 )
 
@@ -94,5 +118,6 @@ training_data
 Whenever you ask a new question, it will find the 10 most relevant pieces of training data and use it as part of the LLM prompt to generate the SQL.
 python"""
 
-results = vn.ask(question="EQ001 在 2025 年 10 月三種異常的各類型的時間，用分鐘+秒為單位")
+results = vn.ask(question="EQ004 在 2025 年 10到12月 三種異常的各類型的時數，用分鐘+秒為單位。如果該異常沒有時數，也必須出現在圖表上。")
 print(results)
+print(type(results))
