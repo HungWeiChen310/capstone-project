@@ -4,7 +4,7 @@ import re
 import time
 import requests
 from typing import Optional, List
-from .database import db
+from src.database import db
 from .rag import get_default_knowledge_base, RetrievalResult
 from .config import Config
 import sys

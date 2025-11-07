@@ -93,7 +93,7 @@ def create_app(testing=False):
 
 def run_app(host=None, port=None, debug=None, ssl_context=None):
     """運行 Flask 應用程序"""
-    host = host or os.environ.get("HOST", "127.0.0.1")
+    host = host or os.environ.get("HOST", "0.0.0.0")
     port = port or int(os.environ.get("PORT", 443))
     debug = debug or (os.environ.get("FLASK_DEBUG", "False").lower() == "true")
     ssl_context = ssl_context or (
