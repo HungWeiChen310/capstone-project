@@ -4,6 +4,7 @@ Replaces the original TF-IDF implementation with a sentence-transformer and Chro
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 import logging
 import os
 import threading

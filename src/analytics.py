@@ -3,7 +3,7 @@ import json
 import logging
 import os
 import pyodbc  # 引入 pyodbc
-from database import db  # 從 database 模組匯入 db 實例
+from src.database import db  # 從 database 模組匯入 db 實例
 
 logger = logging.getLogger(__name__)
 

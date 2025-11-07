@@ -1,7 +1,7 @@
 ﻿import logging
 import pandas as pd
 import pyodbc
-from database import db
+from src.database import db
 
 
 # --- 1. 設定日誌記錄 ---
