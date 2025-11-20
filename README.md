@@ -1,9 +1,9 @@
-# LINE Bot + OpenAI 整合系統
+# LINE Bot + Ollama (Llama 3) 整合系統
 
 ## 主要功能
 
-- **LINE Bot 智能對話**：接收使用者訊息，利用 ChatGPT 生成專業、具實踐性的回應
-- **文件檢索增強 (RAG)**：整合本地專案文件與程式碼，透過檢索增強生成提供更準確的答案
+- **LINE Bot 智能對話**：接收使用者訊息，利用 Ollama (Llama 3 / gpt-oss:20b) 生成專業、具實踐性的回應
+- **文件檢索增強 (RAG)**：整合本地專案文件與程式碼，透過 ChromaDB 與 SentenceTransformers 進行檢索增強生成，提供更準確的答案
 - **半導體設備監控**：即時監控黏晶機、打線機、切割機等設備的運作狀態，自動偵測異常並發送警報
 - **多語言支援**：支援繁體中文、簡體中文、英文、日文與韓文等多種語言
 - **事件系統**：實作輕量級事件發布/訂閱系統，解耦模組間的依賴
@@ -15,8 +15,10 @@
 - **Python 3.11**：主要開發語言
 - **Flask**：輕量級網頁框架
 - **LINE Bot SDK v3.x**：處理 LINE 訊息互動
-- **OpenAI API**：接入 ChatGPT 模型
+- **Ollama**：本地運行的大型語言模型 (Llama 3 / gpt-oss:20b)
 - **SQL Server**：關聯式資料庫管理系統
+- **ChromaDB**：向量資料庫，用於 RAG 知識庫儲存
+- **SentenceTransformers**：用於生成語意向量 (Embedding)
 - **Flask-Talisman**：網頁安全增強
 - **Schedule**：設備監控排程
 - **Docker**：容器化部署
@@ -33,7 +35,8 @@
 │   ├── services/                 # 業務邏輯模組
 │   ├── utils.py                  # 工具函數
 │   ├── config.py                 # 集中式配置管理
-│   ├── main.py                   # 核心邏輯與 OpenAI 服務
+│   ├── main.py                   # 核心邏輯與 Ollama 服務
+│   ├── rag.py                    # RAG 檢索增強生成邏輯 (ChromaDB + SentenceTransformers)
 │   ├── linebot_connect.py        # LINE Bot 事件處理
 │   ├── database.py               # 資料庫操作
 │   ├── analytics.py              # 數據分析模組
@@ -41,6 +44,7 @@
 │   ├── equipment_scheduler.py    # 設備監控排程器
 │   ├── event_system.py           # 事件發布/訂閱系統
 │   └── initial_data.py           # 初始資料生成
+├── rag_db/                       # ChromaDB 向量資料庫儲存目錄
 ├── templates/                    # HTML 模板
 ├── .github/workflows/            # GitHub Actions 設定
 ├── Dockerfile                    # Docker 配置
@@ -58,16 +62,25 @@
 # 一般設定
 FLASK_DEBUG=False
 PORT=5000
-HOST=127.0.0.1
+# HOST=127.0.0.1 (非必要，視部署環境而定)
 SECRET_KEY=your_secret_key
 SECRET_KEY_FILE=data/secret_key.txt
 
-# OpenAI API
-OPENAI_API_KEY=your_openai_api_key
+# Ollama 設定 (本地 AI 模型)
+OLLAMA_HOST=120.105.18.33
+OLLAMA_PORT=11434
+OLLAMA_MODEL=gpt-oss:20b
+OLLAMA_TIMEOUT=30.0
 
 # LINE Bot API
 LINE_CHANNEL_ACCESS_TOKEN=your_line_channel_access_token
 LINE_CHANNEL_SECRET=your_line_channel_secret
+
+# 資料庫設定 (SQL Server)
+DB_SERVER=localhost
+DB_NAME=Project
+DB_USER=your_db_user
+DB_PASSWORD=your_db_password
 
 # 管理後台
 ADMIN_USERNAME=admin_username
@@ -76,15 +89,16 @@ ADMIN_PASSWORD=admin_password
 
 ### RAG 設定
 
-系統會自動將專案中的 `README.md`、`Documentary.md`、`src/`、`templates/` 等路徑載入為知識庫。
+系統使用 `ChromaDB` 與 `SentenceTransformers` (`paraphrase-multilingual-mpnet-base-v2`) 自動將專案中的文件與資料庫內容載入為知識庫。
 可依需求透過以下環境變數調整行為：
 
-- `ENABLE_RAG`：是否啟用檢索增強（預設為 `true`）
+- `ENABLE_RAG` / `ENABLE_RAG_DB`：是否啟用檢索增強（預設為 `true`）
 - `RAG_SOURCE_PATHS`：自訂知識庫來源路徑，使用作業系統的路徑分隔符號分隔多個路徑
-- `RAG_CHUNK_SIZE` / `RAG_CHUNK_OVERLAP`：切分文件時的片段大小與重疊字元數
-- `RAG_TOP_K`：每次檢索返回的片段數量
-- `RAG_MIN_SCORE`：相似度門檻值（0~1 之間，建議值 0.05）
-- `RAG_MAX_CONTEXT_CHARS`：插入模型系統提示的最大字數，避免產生過長的上下文
+- `RAG_CHUNK_SIZE`：切分文件時的片段大小（預設 500）
+- `RAG_CHUNK_OVERLAP`：片段重疊字元數（預設 100）
+- `RAG_DB_TOP_K`：檢索時包含的資料庫記錄數量（預設 3）
+- `RAG_TOP_K`：每次檢索返回的總片段數量
+- `RAG_MIN_SCORE`：相似度門檻值
 
 ### 安裝相依套件
 
@@ -166,13 +180,13 @@ Docker 映像檔採用官方 Python 3.11-slim 為基礎，並實作以下安全�
 ## 問題排解
 
 - **LINE 簽名驗證失敗**：檢查 LINE_CHANNEL_SECRET 設定
-- **OpenAI API 回應異常**：確認 API 金鑰與使用額度
+- **Ollama 連線異常**：確認 OLLAMA_HOST 與 OLLAMA_PORT 設定，並確保 Ollama 服務已啟動且模型 (gpt-oss:20b) 已下載
 - **設備監控問題**：確認資料庫初始化與排程器狀態
 
 ## 相關資源
 
 - [LINE 開發者平台](https://developers.line.biz/zh-hant/)
-- [OpenAI API 文件](https://platform.openai.com/docs/)
+- [Ollama 官方網站](https://ollama.com/)
 - [Flask 文件](https://flask.palletsprojects.com/)
 
 更多詳細資訊，請參閱專案中的 [Documentary.md](Documentary.md)
