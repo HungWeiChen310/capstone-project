@@ -9,8 +9,10 @@ import logging
 import os
 import threading
 import time
+import json
+import hashlib
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Dict, Iterable, List, Optional, Sequence, Tuple, Set
 
 import chromadb
 import numpy as np
@@ -102,6 +104,8 @@ class RAGKnowledgeBase:
         self.chroma_client = chromadb.PersistentClient(path=_chroma_path)
         self.collection = self.chroma_client.get_or_create_collection(self._collection_name)
 
+        self._state_file = Path(_chroma_path) / "rag_state.json"
+
         # Resolve source paths
         env_sources = os.getenv("RAG_SOURCE_PATHS")
         book_dir = self.project_root / "src_book"
@@ -119,12 +123,10 @@ class RAGKnowledgeBase:
 
         # Initial data load
         with self._lock:
-            if self.collection.count() == 0:
-                logger.info("Knowledge base is empty. Performing initial data load.")
-                self._load_documents()
-                self._load_database_documents()
-            else:
-                logger.info("Knowledge base already contains %s documents. Skipping initial load.", self.collection.count())
+            # Always try to sync on startup, but efficiently
+            logger.info("Initializing Knowledge Base. Syncing documents...")
+            self._sync_documents()
+            self._sync_database_documents()
 
         # Start background refresh thread
         self._start_auto_refresh_thread()
@@ -146,12 +148,36 @@ class RAGKnowledgeBase:
         columns = [column[0] for column in cursor.description]
         return [{column: row[idx] for idx, column in enumerate(columns)} for row in rows]
 
-    def ingest_from_mssql(self, db: database.Database) -> None:
-        """Load MSSQL tables and upsert KnowledgeDocument entries into the vector store."""
-        if not db:
-            raise ValueError("Database instance is required for MSSQL ingestion.")
+    def _load_state(self) -> Dict[str, Dict]:
+        if self._state_file.exists():
+            try:
+                with open(self._state_file, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            except Exception as e:
+                logger.warning(f"Failed to load RAG state file: {e}. Resetting state.")
+        return {}
 
-        # Simplified data source config for example; ensure this matches your actual needs or config
+    def _save_state(self, state: Dict[str, Dict]) -> None:
+        try:
+            with open(self._state_file, 'w', encoding='utf-8') as f:
+                json.dump(state, f, indent=2)
+        except Exception as e:
+            logger.error(f"Failed to save RAG state file: {e}")
+
+    def _get_content_hash(self, content: str) -> str:
+        return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+    def _sync_database_documents(self) -> None:
+        """Incrementally sync database records to vector store."""
+        if not self._enable_db_ingestion: return
+
+        db_instance = self._db_instance or getattr(database, "db", None)
+        if not db_instance:
+            logger.debug("Skipping MSSQL ingestion: no database instance.")
+            return
+        self._db_instance = db_instance
+
+        # Simplified data source config
         data_sources = [
              {
                 "query": "SELECT * FROM equipment",
@@ -171,7 +197,11 @@ class RAGKnowledgeBase:
             }
         ]
 
-        all_docs: List[KnowledgeDocument] = []
+        state = self._load_state()
+        db_state = state.get("database", {})
+        new_db_state = {}
+        docs_to_add = []
+        ids_processed = set()
 
         try:
             with db._get_connection() as conn:
@@ -180,8 +210,7 @@ class RAGKnowledgeBase:
                     try:
                         cursor.execute(source["query"])
                         rows_raw = cursor.fetchall()
-                        if not rows_raw:
-                            continue
+                        if not rows_raw: continue
 
                         row_dicts = self._rows_to_dicts(cursor, rows_raw)
 
@@ -189,6 +218,7 @@ class RAGKnowledgeBase:
                             doc_id_parts = [str(row.get(c)) for c in source["id_columns"] if row.get(c) not in (None, "")]
                             if not doc_id_parts: continue
 
+                            # Build content
                             content_parts = []
                             for col in source["text_columns"]:
                                 val = _format_value(row.get(col))
@@ -198,19 +228,28 @@ class RAGKnowledgeBase:
                             content = "\n".join(content_parts).strip()
                             if not content: continue
 
-                            metadata = {
-                                "source": source["source_tag"],
-                                "row_id": "::".join(doc_id_parts),
-                                "origin": "database",
-                                "source_type": "mssql",
-                                "source_table": source["table"],
-                            }
-                            for col in source["meta_columns"]:
-                                value = _format_value(row.get(col))
-                                if value: metadata[col] = value
+                            # Unique ID for this record in DB
+                            record_unique_id = f"{source['source_tag']}::{'::'.join(doc_id_parts)}"
+                            current_hash = self._get_content_hash(content)
 
-                            doc_id = f"{source['source_tag']}::{'::'.join(doc_id_parts)}"
-                            all_docs.append(KnowledgeDocument(doc_id=doc_id, content=content, metadata=metadata))
+                            new_db_state[record_unique_id] = current_hash
+                            ids_processed.add(record_unique_id)
+
+                            # Check if changed
+                            if record_unique_id not in db_state or db_state[record_unique_id] != current_hash:
+                                # Prepare metadata
+                                metadata = {
+                                    "source": source["source_tag"],
+                                    "row_id": "::".join(doc_id_parts),
+                                    "origin": "database",
+                                    "source_type": "mssql",
+                                    "source_table": source["table"],
+                                }
+                                for col in source["meta_columns"]:
+                                    value = _format_value(row.get(col))
+                                    if value: metadata[col] = value
+
+                                docs_to_add.append(KnowledgeDocument(doc_id=record_unique_id, content=content, metadata=metadata))
 
                     except pyodbc.Error as e:
                         logger.error("Failed to ingest MSSQL table '%s': %s", source["table"], e)
@@ -218,32 +257,26 @@ class RAGKnowledgeBase:
             logger.error("Failed to connect to MSSQL for RAG ingestion: %s", e)
             return
 
-        if not all_docs:
-            logger.info("MSSQL ingestion yielded no new documents.")
-            return
-
         with self._lock:
-            # Clear old database documents before upserting new ones
-            try:
-                self.collection.delete(where={"origin": "database"})
-            except Exception as e:
-                logger.warning(f"Could not delete old DB docs (maybe collection empty?): {e}")
+            # 1. Remove deleted records
+            ids_to_delete = [doc_id for doc_id in db_state if doc_id not in ids_processed]
+            if ids_to_delete:
+                try:
+                    logger.info(f"Removing {len(ids_to_delete)} obsolete database records from Knowledge Base.")
+                    self.collection.delete(ids=ids_to_delete)
+                except Exception as e:
+                    logger.error(f"Failed to delete obsolete DB records: {e}")
 
-            self._add_documents_to_collection(all_docs)
+            # 2. Upsert new/changed records
+            if docs_to_add:
+                logger.info(f"Upserting {len(docs_to_add)} new/changed database records.")
+                self._add_documents_to_collection(docs_to_add)
 
-        logger.info("MSSQL ingestion complete. Upserted %s documents.", len(all_docs))
+            # 3. Update state
+            state["database"] = new_db_state
+            self._save_state(state)
 
-    def _load_database_documents(self) -> None:
-        if not self._enable_db_ingestion: return
-        db_instance = self._db_instance or getattr(database, "db", None)
-        if not db_instance:
-            logger.debug("Skipping MSSQL ingestion: no database instance.")
-            return
-        self._db_instance = db_instance
-        try:
-            self.ingest_from_mssql(db_instance)
-        except Exception as e:
-            logger.exception("Failed to ingest MSSQL data: %s", e)
+        logger.info("Database sync complete.")
 
     @property
     def documents(self) -> List[KnowledgeDocument]:
@@ -259,18 +292,11 @@ class RAGKnowledgeBase:
         return self.collection.count() > 0
 
     def refresh(self) -> None:
-        """Reload all documents and rebuild the vector index."""
+        """Incrementally refresh the knowledge base."""
         with self._lock:
-            logger.info("Refreshing knowledge base. Clearing all existing documents.")
-            # A full refresh by clearing the collection
-            try:
-                self.chroma_client.delete_collection(self._collection_name)
-            except ValueError:
-                pass # Collection might not exist
-
-            self.collection = self.chroma_client.get_or_create_collection(self._collection_name)
-            self._load_documents()
-            self._load_database_documents()
+            logger.info("Scanning for changes in knowledge base...")
+            self._sync_documents()
+            self._sync_database_documents()
         logger.info("Knowledge base refresh complete.")
 
     def search(
@@ -346,35 +372,84 @@ class RAGKnowledgeBase:
                 logger.warning("Skipping unavailable RAG source: %s", path)
         return tuple(resolved)
 
-    def _load_documents(self) -> None:
-        """Load and embed documents from the filesystem."""
-        all_docs: List[KnowledgeDocument] = []
+    def _sync_documents(self) -> None:
+        """Sync filesystem documents incrementally."""
+        state = self._load_state()
+        file_state = state.get("files", {})
+        new_file_state = {}
+
+        files_processed: Set[str] = set()
+        docs_to_add: List[KnowledgeDocument] = []
+        files_to_remove_from_db: List[str] = [] # list of relative paths
+
         for file_path in self._iter_source_files(self._source_paths):
             try:
+                relative_path = str(file_path.relative_to(self.project_root))
+            except ValueError:
+                relative_path = str(file_path)
+
+            files_processed.add(relative_path)
+
+            try:
+                stat = file_path.stat()
+                mtime = stat.st_mtime
+                # Simple change detection: mtime
+                # Note: If you want to be more robust against "touch", include size or content hash
+
+                prev_info = file_state.get(relative_path)
+
+                if prev_info and prev_info.get("mtime") == mtime:
+                    # File unchanged, keep in state
+                    new_file_state[relative_path] = prev_info
+                    continue
+
+                # File changed or new
+                logger.info(f"Detected change in file: {relative_path}")
                 text = file_path.read_text(encoding="utf-8", errors="ignore")
+                chunks = [chunk.strip() for chunk in self._split_into_chunks(text.replace("\r\n", "\n")) if chunk.strip()]
+
+                if not chunks: continue
+
+                # If file existed before, we must remove its old chunks first
+                if prev_info:
+                     files_to_remove_from_db.append(relative_path)
+
+                for idx, chunk in enumerate(chunks, 1):
+                    metadata = {
+                        "source": relative_path, "chunk_index": str(idx),
+                        "chunk_count": str(len(chunks)), "origin": "text", "source_type": "filesystem",
+                    }
+                    doc_id = f"{relative_path}::chunk-{idx}"
+                    docs_to_add.append(KnowledgeDocument(doc_id, chunk, metadata))
+
+                new_file_state[relative_path] = {"mtime": mtime}
+
             except OSError as e:
-                logger.warning("Failed to read file %s: %s", file_path, e)
+                logger.warning("Failed to process file %s: %s", file_path, e)
                 continue
 
-            chunks = [chunk.strip() for chunk in self._split_into_chunks(text.replace("\r\n", "\n")) if chunk.strip()]
-            if not chunks: continue
+        # Identify deleted files
+        for old_path in file_state:
+            if old_path not in files_processed:
+                logger.info(f"File deleted: {old_path}")
+                files_to_remove_from_db.append(old_path)
 
-            try: relative_path = str(file_path.relative_to(self.project_root))
-            except ValueError: relative_path = str(file_path)
+        with self._lock:
+            # 1. Remove old chunks for changed/deleted files
+            for rel_path in files_to_remove_from_db:
+                try:
+                    self.collection.delete(where={"source": rel_path})
+                except Exception as e:
+                    logger.warning(f"Failed to delete chunks for {rel_path}: {e}")
 
-            for idx, chunk in enumerate(chunks, 1):
-                metadata = {
-                    "source": relative_path, "chunk_index": str(idx),
-                    "chunk_count": str(len(chunks)), "origin": "text", "source_type": "filesystem",
-                }
-                doc_id = f"{relative_path}::chunk-{idx}"
-                all_docs.append(KnowledgeDocument(doc_id, chunk, metadata))
+            # 2. Add new chunks
+            if docs_to_add:
+                logger.info(f"Upserting {len(docs_to_add)} chunks from changed files.")
+                self._add_documents_to_collection(docs_to_add)
 
-        if all_docs:
-            self._add_documents_to_collection(all_docs)
-            logger.info("Loaded and indexed %s filesystem chunks.", len(all_docs))
-        else:
-            logger.warning("Did not find any filesystem documents to load.")
+            # 3. Update state
+            state["files"] = new_file_state
+            self._save_state(state)
 
     def _add_documents_to_collection(self, docs: List[KnowledgeDocument], batch_size: int = 128) -> None:
         """Embeds and adds documents to the Chroma collection in batches."""
