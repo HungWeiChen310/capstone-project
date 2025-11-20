@@ -78,7 +78,6 @@ def get_system_prompt(language="zh-Hant"):
 
 class UserData:
     """Stores user conversation history, using a database and in-memory cache."""
-    # UserData class remains the same
     def __init__(self, max_users=1000, max_messages=40, inactive_timeout=3600):
         self.temp_conversations = {}
         self.user_last_active = {}
@@ -99,22 +98,42 @@ class UserData:
         cleanup_thread.start()
 
     def get_conversation(self, user_id):
+        """
+        Retrieves conversation history for a user.
+        If not in memory, tries to load from the database.
+        """
         self.user_last_active[user_id] = time.time()
-        if len(self.temp_conversations) > self.max_users:
-            self._cleanup_least_active_users()
+
+        # If in memory, return directly
         if user_id in self.temp_conversations:
             return self.temp_conversations[user_id]
-        conversation = []
+
+        # Cleanup if cache is full
+        if len(self.temp_conversations) > self.max_users:
+            self._cleanup_least_active_users()
+
+        # Try to load from DB
+        logging.info(f"Loading conversation history for user {user_id} from database.")
+        history_from_db = db.get_conversation_history(user_id, limit=self.max_messages)
+
+        # Format: [{'role': 'user', 'content': '...'}, {'role': 'assistant', 'content': '...'}]
+        # Ensure system prompt is handled in get_response, so just load raw messages here.
+        conversation = history_from_db if history_from_db else []
+
         self.temp_conversations[user_id] = conversation
         return conversation
 
     def add_message(self, user_id, role, content):
         sender = user_id if role == "user" else "bot"
         receiver = "bot" if role == "user" else user_id
+
+        # Persist to DB
         db.add_message(sender, receiver, role, content)
+
         self.user_last_active[user_id] = time.time()
         conversation = self.get_conversation(user_id)
         conversation.append({"role": role, "content": content})
+
         if self.max_messages and self.max_messages > 0:
             has_system = bool(conversation and conversation[0].get("role") == "system")
             keep_limit = self.max_messages + (1 if has_system else 0)
@@ -191,6 +210,7 @@ class OllamaService:
         conversation = user_data.get_conversation(self.user_id)
         system_prompt = get_system_prompt(self.language)
 
+        # Ensure system prompt exists
         if not conversation or conversation[0].get("role") != "system":
             conversation.insert(0, {"role": "system", "content": system_prompt})
         elif conversation[0].get("content") != system_prompt:

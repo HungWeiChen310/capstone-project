@@ -1,16 +1,23 @@
 # src/routes/admin.py
-from flask import request, session, redirect, url_for, flash, render_template
+from flask import request, session, redirect, url_for, flash, render_template, abort
 from . import admin_bp
 from ..services.auth_service import admin_required
 from ..database import db
 import os
 import datetime
+import logging
 
-ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
-ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "password")
+logger = logging.getLogger(__name__)
+
+ADMIN_USERNAME = os.getenv("ADMIN_USERNAME")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD")
 
 @admin_bp.route("/login", methods=["GET", "POST"])
 def admin_login():
+    if not ADMIN_USERNAME or not ADMIN_PASSWORD:
+        logger.error("Admin login attempted, but ADMIN_USERNAME or ADMIN_PASSWORD is not set.")
+        return "Admin login is disabled because credentials are not configured.", 503
+
     if request.method == "POST":
         username = request.form.get("username")
         password = request.form.get("password")

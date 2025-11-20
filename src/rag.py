@@ -8,6 +8,7 @@ from dataclasses import dataclass
 import logging
 import os
 import threading
+import time
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
@@ -18,7 +19,7 @@ import torch
 from sentence_transformers import SentenceTransformer
 
 from . import database
-from .utils import _format_value  # Assuming _format_value is in utils
+from .utils import _format_value
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +27,6 @@ logger = logging.getLogger(__name__)
 @dataclass(frozen=True)
 class KnowledgeDocument:
     """A single chunk of text that can be retrieved by the RAG engine."""
-
     doc_id: str
     content: str
     metadata: Dict[str, str]
@@ -35,7 +35,6 @@ class KnowledgeDocument:
 @dataclass(frozen=True)
 class RetrievalResult:
     """Represents the outcome of a similarity search."""
-
     document: KnowledgeDocument
     score: float  # Similarity score, where higher is better
 
@@ -73,6 +72,7 @@ class RAGKnowledgeBase:
         embedding_model_name: Optional[str] = None,
         chroma_path: Optional[str] = None,
         collection_name: Optional[str] = None,
+        auto_refresh_interval: int = 3600,  # Default refresh every 1 hour
     ) -> None:
         """Configure the knowledge base, initialize the model, and load documents."""
         if chunk_size <= 0:
@@ -88,8 +88,9 @@ class RAGKnowledgeBase:
         self.max_file_size = max_file_size
         self._db_instance: Optional[database.Database] = db_instance
         self._lock = threading.RLock()
+        self.auto_refresh_interval = auto_refresh_interval
 
-        # Setup Sentence Transformer model (will use GPU if available)
+        # Setup Sentence Transformer model
         device = "cuda" if torch.cuda.is_available() else "cpu"
         model_name = embedding_model_name or self.DEFAULT_EMBEDDING_MODEL
         logger.info("Initializing SentenceTransformer model '%s' on device '%s'.", model_name, device)
@@ -111,9 +112,13 @@ class RAGKnowledgeBase:
                 source_paths = [p for p in env_sources.split(os.pathsep) if p]
         self._source_paths: Sequence[Path] = self._resolve_sources(source_paths)
 
+        self._enable_db_ingestion = enable_db_ingestion and os.getenv(
+            "ENABLE_RAG_DB", "true"
+        ).lower() not in {"false", "0", "no"}
+        self._default_db_top_k = int(os.getenv("RAG_DB_TOP_K", "3"))
+
         # Initial data load
         with self._lock:
-            # Check if the collection is empty before initial load
             if self.collection.count() == 0:
                 logger.info("Knowledge base is empty. Performing initial data load.")
                 self._load_documents()
@@ -121,11 +126,21 @@ class RAGKnowledgeBase:
             else:
                 logger.info("Knowledge base already contains %s documents. Skipping initial load.", self.collection.count())
 
-        self._enable_db_ingestion = enable_db_ingestion and os.getenv(
-            "ENABLE_RAG_DB", "true"
-        ).lower() not in {"false", "0", "no"}
-        self._default_db_top_k = int(os.getenv("RAG_DB_TOP_K", "3"))
+        # Start background refresh thread
+        self._start_auto_refresh_thread()
 
+    def _start_auto_refresh_thread(self):
+        def refresh_task():
+            while True:
+                time.sleep(self.auto_refresh_interval)
+                try:
+                    logger.info("Auto-refreshing RAG knowledge base...")
+                    self.refresh()
+                except Exception as e:
+                    logger.error(f"Error during auto-refresh: {e}")
+
+        thread = threading.Thread(target=refresh_task, daemon=True, name="RAGRefreshThread")
+        thread.start()
 
     def _rows_to_dicts(self, cursor, rows) -> List[Dict[str, object]]:
         columns = [column[0] for column in cursor.description]
@@ -136,8 +151,24 @@ class RAGKnowledgeBase:
         if not db:
             raise ValueError("Database instance is required for MSSQL ingestion.")
 
+        # Simplified data source config for example; ensure this matches your actual needs or config
         data_sources = [
-            # ... (Your data_sources configuration remains the same)
+             {
+                "query": "SELECT * FROM equipment",
+                "table": "equipment",
+                "source_tag": "Equipment",
+                "id_columns": ["equipment_id"],
+                "text_columns": ["name", "equipment_type", "status", "location"],
+                "meta_columns": ["equipment_id", "equipment_type"]
+            },
+             {
+                "query": "SELECT TOP 50 * FROM alert_history ORDER BY created_time DESC",
+                "table": "alert_history",
+                "source_tag": "Alert",
+                "id_columns": ["error_id"],
+                "text_columns": ["detected_anomaly_type", "severity_level", "resolution_notes"],
+                "meta_columns": ["equipment_id", "is_resolved"]
+            }
         ]
 
         all_docs: List[KnowledgeDocument] = []
@@ -158,10 +189,13 @@ class RAGKnowledgeBase:
                             doc_id_parts = [str(row.get(c)) for c in source["id_columns"] if row.get(c) not in (None, "")]
                             if not doc_id_parts: continue
 
-                            content = "\n".join(
-                                f"{col.replace('_', ' ').title()}: {_format_value(row.get(col))}"
-                                for col in source["text_columns"] if _format_value(row.get(col))
-                            ).strip()
+                            content_parts = []
+                            for col in source["text_columns"]:
+                                val = _format_value(row.get(col))
+                                if val:
+                                    content_parts.append(f"{col.replace('_', ' ').title()}: {val}")
+
+                            content = "\n".join(content_parts).strip()
                             if not content: continue
 
                             metadata = {
@@ -190,7 +224,11 @@ class RAGKnowledgeBase:
 
         with self._lock:
             # Clear old database documents before upserting new ones
-            self.collection.delete(where={"origin": "database"})
+            try:
+                self.collection.delete(where={"origin": "database"})
+            except Exception as e:
+                logger.warning(f"Could not delete old DB docs (maybe collection empty?): {e}")
+
             self._add_documents_to_collection(all_docs)
 
         logger.info("MSSQL ingestion complete. Upserted %s documents.", len(all_docs))
@@ -225,7 +263,11 @@ class RAGKnowledgeBase:
         with self._lock:
             logger.info("Refreshing knowledge base. Clearing all existing documents.")
             # A full refresh by clearing the collection
-            self.chroma_client.delete_collection(self._collection_name)
+            try:
+                self.chroma_client.delete_collection(self._collection_name)
+            except ValueError:
+                pass # Collection might not exist
+
             self.collection = self.chroma_client.get_or_create_collection(self._collection_name)
             self._load_documents()
             self._load_database_documents()

@@ -16,6 +16,7 @@ from linebot.v3.messaging import (
 from typing import Callable, List, Tuple
 import logging
 import pyodbc
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -94,22 +95,25 @@ def __language() -> TextMessage:
 
 def __set_language(text: str, db, user_id) -> TextMessage:
     """設置語言"""
-    lang_code_input = text.split(":", 1)[1].strip().lower()
-    valid_langs = {"zh-hant": "zh-Hant", "zh": "zh-Hant"}
-    lang_to_set = valid_langs.get(lang_code_input)
+    try:
+        lang_code_input = text.split(":", 1)[1].strip().lower()
+        valid_langs = {"zh-hant": "zh-Hant", "zh": "zh-Hant"}
+        lang_to_set = valid_langs.get(lang_code_input)
 
-    if lang_to_set:
-        if db.set_user_preference(user_id, language=lang_to_set):
-            confirmation_map = {"zh-Hant": "語言已切換至 繁體中文"}
-            reply_message_obj = TextMessage(
-                text=confirmation_map.get(lang_to_set, f"語言已設定為 {lang_to_set}")
-            )
+        if lang_to_set:
+            if db.set_user_preference(user_id, language=lang_to_set):
+                confirmation_map = {"zh-Hant": "語言已切換至 繁體中文"}
+                reply_message_obj = TextMessage(
+                    text=confirmation_map.get(lang_to_set, f"語言已設定為 {lang_to_set}")
+                )
+            else:
+                reply_message_obj = TextMessage(text="語言設定失敗，請稍後再試。")
         else:
-            reply_message_obj = TextMessage(text="語言設定失敗，請稍後再試。")
-    else:
-        reply_message_obj = TextMessage(
-            text="不支援的語言代碼。目前支援：zh-Hant (繁體中文)"
-        )
+            reply_message_obj = TextMessage(
+                text="不支援的語言代碼。目前支援：zh-Hant (繁體中文)"
+            )
+    except IndexError:
+        reply_message_obj = TextMessage(text="格式錯誤。請使用: language:zh-Hant")
     return reply_message_obj
 
 
@@ -201,8 +205,10 @@ def __equipment_status(db) -> TextMessage:
 
 def __subscribe_equipment(text, db, user_id: str) -> TextMessage:
     """訂閱設備"""
-    parts = text.split(" ", 1)
-    if len(parts) < 2 or not parts[1].strip():  # 指令為 "訂閱設備"
+    # Improved splitting logic: split by any whitespace
+    parts = text.split(maxsplit=1)
+
+    if len(parts) < 2 or not parts[1].strip():  # 指令為 "訂閱設備" (無參數)
         try:
             with db._get_connection() as conn:  # 使用 MS SQL Server 連線
                 cursor = conn.cursor()
@@ -306,7 +312,7 @@ def __subscribe_equipment(text, db, user_id: str) -> TextMessage:
 
 
 def __unsubscribe_equipment(text: str, db, user_id: str) -> TextMessage:
-    parts = text.split(" ", 1)
+    parts = text.split(maxsplit=1)
     if len(parts) < 2 or not parts[1].strip():  # 指令為 "取消訂閱"
         try:
             with db._get_connection() as conn:  # 使用 MS SQL Server 連線
@@ -442,18 +448,14 @@ def __my_subscriptions(db, user_id: str) -> TextMessage:
 
 
 def __equipment_details(text: str, db, user_id: str) -> TextMessage:
-    command_parts = text.split(" ", 1)
-    if len(command_parts) < 2 or not command_parts[1].strip():
-        command_parts_zh = text.split(" ", 1)  # E701: 全形空格問題已在此解決
-        if len(command_parts_zh) < 2 or not command_parts_zh[1].strip():
-            reply_message_obj = TextMessage(
-                text="請指定設備名稱或ID，例如「設備詳情 黏晶機A1」或「設備詳情 DB001」"
-            )
-            return reply_message_obj
-        else:
-            equipment_name = command_parts_zh[1].strip()
-    else:
-        equipment_name = command_parts[1].strip()
+    parts = text.split(maxsplit=1)
+    if len(parts) < 2 or not parts[1].strip():
+        reply_message_obj = TextMessage(
+            text="請指定設備名稱或ID，例如「設備詳情 黏晶機A1」或「設備詳情 DB001」"
+        )
+        return reply_message_obj
+
+    equipment_name = parts[1].strip()
 
     if equipment_name:  # 確保 equipment_name 已被賦值
         try:
@@ -561,20 +563,27 @@ __commands = {
     "我的訂閱": __my_subscriptions, "my subscriptions": __my_subscriptions,
 }
 
+# Improved regex-like matching using simpler string checks for now, can be upgraded to full regex if needed
 __fuzzy_commands: List[Tuple[Callable[[str], bool], Callable[[str], TextMessage]]] = [
     (lambda text: text.startswith("language:") or text.startswith("語言:"), __set_language),
-    (lambda text: text.startswith("訂閱設備") or text.startswith("subscribe equipment"), __subscribe_equipment),
-    (lambda text: text.startswith("取消訂閱") or text.startswith("unsubscribe"), __unsubscribe_equipment),
-    (lambda text: text.startswith("設備詳情") or text.startswith("機台詳情"), __equipment_details),
+    (lambda text: "訂閱設備" in text or "subscribe equipment" in text, __subscribe_equipment),
+    (lambda text: "取消訂閱" in text or "unsubscribe" in text, __unsubscribe_equipment),
+    (lambda text: "設備詳情" in text or "機台詳情" in text, __equipment_details),
 ]
 
 
 def __get_command(text: str) -> Callable[[str], TextMessage]:
     """根據輸入文字返回對應的命令函數"""
-    if text in __commands:
-        return __commands[text]
+    # Case-insensitive cleanup
+    normalized_text = text.strip().lower()
+
+    if normalized_text in __commands:
+        return __commands[normalized_text]
+
+    # Check fuzzy commands with original text (some might need it, though we check lower inside lambda usually)
+    # Adjust lambda to check normalized text if consistent
     for condition, command in __fuzzy_commands:
-        if condition(text):
+        if condition(normalized_text):
             return command
     return None
 
