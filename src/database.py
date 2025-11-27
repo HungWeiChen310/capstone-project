@@ -1,7 +1,15 @@
 import logging
 import os
+import sys
 import pyodbc
 import datetime
+
+if __package__ is None or __package__ == "":
+    import pathlib
+
+    sys.path.append(str(pathlib.Path(__file__).resolve().parent.parent))
+    __package__ = "src"
+
 from .config import Config
 
 
@@ -55,6 +63,7 @@ class Database:
                     [equipment_id] NVARCHAR(255) NOT NULL PRIMARY KEY,
                     [name] NVARCHAR(255) NOT NULL,
                     [equipment_type] NVARCHAR(255) NULL,
+                    [location] NVARCHAR(255) NULL,
                     [status] NVARCHAR(255) NOT NULL,
                     [last_updated] datetime2(2) NULL
                 """

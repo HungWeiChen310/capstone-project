@@ -1,7 +1,17 @@
 ﻿import logging
+import pathlib
+import sys
+
 import pandas as pd
 import pyodbc
-from src.database import db
+
+# Allow running this module directly (e.g., `python src/initial_data.py`) by
+# ensuring the package root is on sys.path and __package__ is set.
+if __package__ is None or __package__ == "":
+    sys.path.append(str(pathlib.Path(__file__).resolve().parent.parent))
+    __package__ = "src"
+
+from .database import db
 
 
 # --- 1. 設定日誌記錄 ---
@@ -38,12 +48,13 @@ TABLE_CONFIGS = [
     {
         "excel_sheet_name": "equipment",
         "sql_table_name": "equipment",
-        "sql_columns": ["id", "equipment_id", "name", "equipment_type", "status", "last_updated"],
+        "sql_columns": ["id", "equipment_id", "name", "equipment_type", "location", "status", "last_updated"],
         "transform_row_data": lambda row: (
             row.get('id'),
             row.get('equipment_id'),
             row.get('name'),
             row.get('equipment_type'),
+            row.get('location'),
             row.get('status'),
             pd.to_datetime(row.get('last_updated')) if pd.notna(row.get('last_updated')) else None
         )
