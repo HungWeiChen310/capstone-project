@@ -24,8 +24,9 @@ logger = logging.getLogger(__name__)
 
 
 # --- 2. 設定 Excel 檔案路徑 ---
-# 定義包含所有來源數據的 Excel 檔案路徑。
-EXCEL_FILE_PATH = r'data\simulated_data (1).xlsx'
+# 使用跨平台路徑，避免硬編碼 Windows 反斜線。
+PROJECT_ROOT = pathlib.Path(__file__).resolve().parent.parent
+EXCEL_FILE_PATH = PROJECT_ROOT / "data" / "simulated_data (1).xlsx"
 
 
 def _parse_excel_datetime(value):

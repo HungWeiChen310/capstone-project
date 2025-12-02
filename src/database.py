@@ -19,15 +19,26 @@ logger = logging.getLogger(__name__)
 class Database:
     """處理對話記錄與使用者偏好儲存的資料庫處理程序"""
 
-    def __init__(self, server=None, database=None):
+    def __init__(self, server=None, database=None, user=None, password=None):
         """初始化資料庫連線"""
         resolved_server = server if server is not None else Config.DB_SERVER
         resolved_database = database if database is not None else Config.DB_NAME
+        resolved_user = user if user is not None else Config.DB_USER
+        resolved_password = password if password is not None else Config.DB_PASSWORD
+
+        #if not resolved_user or not resolved_password:
+        #    logger.error("缺少 DB_USER 或 DB_PASSWORD，無法使用帳號密碼登入 SQL Server。")
+        #    raise ValueError("DB_USER 與 DB_PASSWORD 為必填，請確認環境變數設定。")
+
         self.connection_string = (
             "DRIVER={ODBC Driver 17 for SQL Server};"
             f"SERVER={resolved_server};"
             f"DATABASE={resolved_database};"
-            "Trusted_Connection=yes;"
+            f"UID={"sa"};"
+            f"PWD={"Qazwsx123"};"
+            "Trusted_Connection=no;"
+            "Encrypt=no;"
+            "TrustServerCertificate=yes;"
         )
         self._initialize_db()
 

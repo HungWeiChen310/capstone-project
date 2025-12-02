@@ -20,6 +20,7 @@ import pyodbc
 import torch
 from sentence_transformers import SentenceTransformer
 
+from .database import db
 from . import database
 from .utils import _format_value
 
@@ -88,7 +89,8 @@ class RAGKnowledgeBase:
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
         self.max_file_size = max_file_size
-        self._db_instance: Optional[database.Database] = db_instance
+        # Default to the global db instance so MSSQL rows are ingested into the vector store.
+        self._db_instance: Optional[database.Database] = db_instance or db
         self._lock = threading.RLock()
         self.auto_refresh_interval = auto_refresh_interval
 
@@ -171,9 +173,10 @@ class RAGKnowledgeBase:
         """Incrementally sync database records to vector store."""
         if not self._enable_db_ingestion: return
 
-        db_instance = self._db_instance or getattr(database, "db", None)
+        db_instance = self._db_instance
         if not db_instance:
-            logger.debug("Skipping MSSQL ingestion: no database instance.")
+            # Use INFO so operators notice the missing DB ingestion path.
+            logger.info("Skipping MSSQL ingestion: no database instance available.")
             return
         self._db_instance = db_instance
 

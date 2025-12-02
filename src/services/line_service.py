@@ -12,8 +12,8 @@ from linebot.v3.messaging import (
 )
 from linebot.v3.messaging.exceptions import ApiException
 from ..database import db
-from .. import reply
-from ..main import reply_message as main_reply_message
+from src import reply
+from src.main import reply_message as main_reply_message
 
 logger = logging.getLogger(__name__)
 
@@ -96,7 +96,7 @@ def process_message_in_background(event):
             logger.error("無法導入 src.main.reply_message")
             reply_message_obj = TextMessage(text="抱歉，AI 對話功能暫時無法使用。")
         except Exception as e:
-            logger.error(f"調用 Ollama 回覆訊息失敗: {e}")
+            logger.exception(f"調用 Ollama 回覆訊息失敗: {e}")
             reply_message_obj = TextMessage(
                 text="抱歉，處理您的請求時發生了錯誤，AI 功能可能暫時無法使用。"
             )

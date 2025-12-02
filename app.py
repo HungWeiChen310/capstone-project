@@ -101,7 +101,7 @@ def run_app(host=None, port=None, debug=None, ssl_context=None):
         os.environ.get('SSL_KEY_PATH', 'certs/capstone-project.me-key.pem')
     )
     app = create_app()
-    app.run(host=host, port=port, debug=debug, ssl_context=ssl_context)
+    app.run(host=host, port=port, debug=debug)
 
 if __name__ == "__main__":
     run_app()

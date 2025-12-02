@@ -270,7 +270,6 @@ class OllamaService:
         """Builds a context message by retrieving relevant content from the new vector knowledge base."""
         if not self.rag_enabled or not self.message:
             return None
-
         try:
             knowledge_base = get_default_knowledge_base()
             if not knowledge_base.is_ready:
@@ -317,9 +316,10 @@ class OllamaService:
         context_header = "Based on the retrieved knowledge, here is some relevant information to help answer the user's question. If the information is insufficient, state what is missing."
         context = f"{context_header}\n\n" + "\n\n---\n\n".join(formatted_sections)
 
+        
         if len(context) > self.rag_max_context_chars:
             context = context[:self.rag_max_context_chars - 4] + "\n..."
-
+        logging.info("RAG reply: %s", context)
         return context
 
     @staticmethod
@@ -370,6 +370,8 @@ def reply_message(event):
     #     pass
 
     # Use the Ollama service with the integrated RAG to generate a response
+
+
     ollama_service = OllamaService(message=user_message, user_id=user_id)
     response = ollama_service.get_response()
     return response

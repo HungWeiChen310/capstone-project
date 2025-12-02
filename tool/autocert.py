@@ -17,7 +17,7 @@ def main() -> None:
     cert_print.mkdir(parents=True, exist_ok=True)
 
     # 從環境變數讀 Cloudflare API Token
-    SSL_API = os.environ.get("SSL_API")
+    SSL_API = os.environ.get("SSL_API","c4dd0297d609b1af6469448beabce66d")
     if SSL_API is None or not SSL_API.strip():
         raise RuntimeError("請設定 SSL_API 環境變數")
 
@@ -51,6 +51,8 @@ def main() -> None:
             capture_output=True,
             text=True,
             timeout=600,
+            errors="ignore",
+            encoding="utf-8", 
             cwd=str(project_root),  # 讓 wacs 的工作目錄在專案根
         )
     except FileNotFoundError as e:
