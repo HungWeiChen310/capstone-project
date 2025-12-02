@@ -17,7 +17,7 @@ def main() -> None:
     cert_print.mkdir(parents=True, exist_ok=True)
 
     # 從環境變數讀 Cloudflare API Token
-    SSL_API = os.environ.get("SSL_API","c4dd0297d609b1af6469448beabce66d")
+    SSL_API = os.environ.get("SSL_API")
     if SSL_API is None or not SSL_API.strip():
         raise RuntimeError("請設定 SSL_API 環境變數")
 
