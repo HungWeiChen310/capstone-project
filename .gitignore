@@ -6,9 +6,6 @@ logs/
 .env.*
 !.env.example
 
-# book
-src_book/
-
 # SSL certificates and keys
 *.pem
 

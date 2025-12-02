@@ -352,7 +352,8 @@ class RAGKnowledgeBase:
             results["ids"][0], results["documents"][0], results["metadatas"][0], results["distances"][0]
         ):
             # Convert cosine distance to a similarity score (0 to 1, higher is better)
-            score = 1 - distance
+            score = distance
+            logger.info(f"Retrieved doc_id={doc_id} with score={score}")
             if score >= min_score:
                 doc = KnowledgeDocument(doc_id=doc_id, content=content, metadata=metadata)
                 processed.append(RetrievalResult(document=doc, score=score))
