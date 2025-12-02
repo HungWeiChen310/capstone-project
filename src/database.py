@@ -26,7 +26,7 @@ class Database:
         resolved_user = user if user is not None else Config.DB_USER
         resolved_password = password if password is not None else Config.DB_PASSWORD
 
-        #if not resolved_user or not resolved_password:
+        # if not resolved_user or not resolved_password:
         #    logger.error("缺少 DB_USER 或 DB_PASSWORD，無法使用帳號密碼登入 SQL Server。")
         #    raise ValueError("DB_USER 與 DB_PASSWORD 為必填，請確認環境變數設定。")
 
