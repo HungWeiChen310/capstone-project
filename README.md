@@ -85,6 +85,7 @@ DB_SERVER=localhost
 DB_NAME=Project
 DB_USER=your_db_user
 DB_PASSWORD=your_db_password
+DB_ODBC_DRIVER=ODBC Driver 17 for SQL Server # 若安裝 msodbcsql18 可改為 "ODBC Driver 18 for SQL Server"
 
 # 管理後台
 ADMIN_USERNAME=admin_username
