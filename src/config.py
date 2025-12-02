@@ -32,8 +32,11 @@ class Config:
     # Database 配置
     DB_SERVER = os.getenv("DB_SERVER", "localhost")  # Default
     DB_NAME = os.getenv("DB_NAME", "Project")  # Default
-    DB_USER = os.getenv("DB_USER")  # For potential future use with non-trusted connections
-    DB_PASSWORD = os.getenv("DB_PASSWORD")  # For potential future use
+    DB_USER = os.getenv("DB_USER")
+    DB_PASSWORD = os.getenv("DB_PASSWORD")
+    # Admin 配置
+    ADMIN_USERNAME = os.getenv("ADMIN_USERNAME")
+    ADMIN_PASSWORD_HASH = os.getenv("ADMIN_PASSWORD_HASH")
     # 驗證模式：嚴格 (strict) 或寬鬆 (loose)
     VALIDATION_MODE = os.getenv("VALIDATION_MODE", "strict")
 
