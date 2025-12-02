@@ -116,7 +116,7 @@
 1. **環境變數設定**  
    依照 `.env.example` 建立 `.env` 檔案，設定下列必要環境變數：
    - **Ollama (AI 模型) 相關：**
-     - `OLLAMA_HOST`：Ollama 服務主機 IP (預設 120.105.18.33)
+     - `OLLAMA_HOST`：Ollama 服務主機 IP (預設 127.0.0.1)
      - `OLLAMA_PORT`：Ollama 服務埠號 (預設 11434)
      - `OLLAMA_MODEL`：使用的模型名稱 (預設 gpt-oss:20b)
      - `OLLAMA_TIMEOUT`：API 請求超時時間
