@@ -32,6 +32,7 @@ class Config:
     # Database 配置
     DB_SERVER = os.getenv("DB_SERVER", "localhost")  # Default
     DB_NAME = os.getenv("DB_NAME", "Project")  # Default
+    DB_ODBC_DRIVER = os.getenv("DB_ODBC_DRIVER", "ODBC Driver 17 for SQL Server")
     DB_USER = os.getenv("DB_USER")  # For potential future use with non-trusted connections
     DB_PASSWORD = os.getenv("DB_PASSWORD")  # For potential future use
     # 驗證模式：嚴格 (strict) 或寬鬆 (loose)

@@ -131,6 +131,11 @@
      - `ADMIN_USERNAME`：管理員帳號
      - `ADMIN_PASSWORD`：管理員密碼
      - `SECRET_KEY`：Flask session 密鑰，用於管理員登入
+   - **資料庫設定：**
+     - `DB_SERVER`：資料庫伺服器位址 (預設 localhost)
+     - `DB_NAME`：資料庫名稱 (預設 Project)
+     - `DB_USER` / `DB_PASSWORD`：需要帳號密碼時填寫
+     - `DB_ODBC_DRIVER`：ODBC 驅動名稱 (預設 `ODBC Driver 17 for SQL Server`，若系統安裝 msodbcsql18 請設定為 `ODBC Driver 18 for SQL Server`)
 
 ### RAG 相關設定
 

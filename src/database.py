@@ -31,7 +31,7 @@ class Database:
         #    raise ValueError("DB_USER 與 DB_PASSWORD 為必填，請確認環境變數設定。")
 
         self.connection_string = (
-            "DRIVER={ODBC Driver 17 for SQL Server};"
+            f"DRIVER={{{Config.DB_ODBC_DRIVER}}};"
             f"SERVER={resolved_server};"
             f"DATABASE={resolved_database};"
             f"UID={"sa"};"
