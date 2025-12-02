@@ -12,6 +12,7 @@ sys.stdout.reconfigure(encoding='utf-8')
 
 
 # Vanna is no longer used for direct SQL generation in the reply flow,
+# 雖然目前可以使用RAG.py中的向量資料庫來輔助回答，如果想要更追求精準的SQL生成，可以考慮保留Vanna的連接功能
 # but the instance might be useful for other potential features.
 # from vanna.ollama import Ollama
 # from vanna.chromadb import ChromaDB_VectorStore
@@ -60,20 +61,6 @@ def get_system_prompt(language="zh-Hant"):
                    提供的建議應包含實踐性的步驟和解決方案。如果不確定答案，請誠實表明。
                    禁止使用任何形式的代碼塊標記（如```）和emoji來回覆內容，直接以純文字形式提供回答。
                    提示詞提供的資料皆為資料庫中搜索的內容，請務必根據這些資料來回答使用者的問題，並在回答中引用相關來源，禁止憑空編造資訊以及不要要求使用者自行查詢。若資料不足以回答使用者的問題，請誠實告知並說明缺少哪些資訊。""",
-        "zh-Hans": """你是一个专业的技术顾问，专注于提供工程相关问题的解答。回答应该具体、实用且易于理解。
-                    请优先使用简体中文回复，除非用户以其他语言提问。
-                    提供的建议应包含实践性的步骤和解决方案。如果不确定答案，请诚实表明。""",
-        "en": """You are a professional technical consultant, focused on providing answers to engineering-related \
-            questions. Your answers should be specific, practical, and easy to understand.
-               Please respond primarily in English unless the user asks in another language.
-               The advice you provide should include practical steps and solutions. If you're unsure about an answer, \
-                   please be honest about it.""",
-        "ja": """あなたは専門技術コンサルタントで、エンジニアリング関連の質問に答えることに焦点を当てています。回答は具体的で実用的かつ理解しやすいものであるべきです。
-               ユーザーが他の言語で質問しない限り、日本語で回答してください。
-               提供するアドバイスには、実践的なステップや解決策を含めてください。回答に自信がない場合は、正直に述べてください。""",
-        "ko": """귀하는 엔지니어링 관련 질문에 대한 답변을 제공하는 데 중점을 둔 전문 기술 컨설턴트입니다. 답변은 구체적이고 실용적이며 이해하기 쉬워야 합니다.
-               사용자가 다른 언어로 질문하지 않는 한 한국어로 응답하십시오.
-               제공하는 조언에는 실용적인 단계와 솔루션이 포함되어야 합니다. 답변이 확실하지 않은 경우 정직하게 말씀해 주십시오.""",
     }
     return system_prompts.get(language, system_prompts["zh-Hant"])
 
@@ -174,7 +161,7 @@ class OllamaService:
     def __init__(self, message, user_id):
         self.user_id = user_id
         self.message = sanitize_input(message)
-        self.ollama_host = os.getenv("OLLAMA_HOST", "120.105.18.33")
+        self.ollama_host = os.getenv("OLLAMA_HOST", "127.0.0.1")
         self.ollama_port = self._parse_int(os.getenv("OLLAMA_PORT"), default=11434)
         self.ollama_scheme = os.getenv("OLLAMA_SCHEME", "http")
         self.ollama_model = os.getenv("OLLAMA_MODEL", "gpt-oss:20b")
@@ -199,10 +186,6 @@ class OllamaService:
         # Fallback responses remain the same
         fallback_responses = {
             "zh-Hant": "抱歉，目前無法處理您的請求，可能是本地 Ollama 服務忙碌或連線異常。請稍後再試，或輸入 'help' 查看其他功能。",
-            "zh-Hans": "抱歉，目前无法处理您的请求，可能是本地 Ollama 服务忙碌或连接异常。请稍后再试，或输入 'help' 查看其他功能。",
-            "en": "Sorry, I cannot process your request right now. The local Ollama service might be busy or unreachable. Please try again later or type 'help' to see other features.",
-            "ja": "申し訳ありませんが、現在リクエストを処理できません。ローカルの Ollama サービスが混雑しているか接続できない可能性があります。しばらくしてから再度お試しいただくか、『help』と入力して他の機能をご確認ください。",
-            "ko": "죄송하지만 현재 요청을 처리할 수 없습니다. 로컬 Ollama 서비스가 바쁘거나 연결이 원활하지 않을 수 있습니다. 잠시 후 다시 시도하시거나 'help'를 입력해 다른 기능을 확인해 주세요.",
         }
         return fallback_responses.get(self.language, fallback_responses["zh-Hant"])
 

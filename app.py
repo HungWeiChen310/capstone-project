@@ -97,8 +97,8 @@ def run_app(host=None, port=None, debug=None, ssl_context=None):
     port = port or int(os.environ.get("PORT", 443))
     debug = debug or (os.environ.get("FLASK_DEBUG", "False").lower() == "true")
     ssl_context = ssl_context or (
-        os.environ.get('SSL_CERT_PATH', 'certs/capstone-project.me-chain.pem'),
-        os.environ.get('SSL_KEY_PATH', 'certs/capstone-project.me-key.pem')
+        os.environ.get('SSL_CERT_PATH', 'chain.pem'),
+        os.environ.get('SSL_KEY_PATH', 'key.pem')
     )
     app = create_app()
     app.run(host=host, port=port, debug=debug)
