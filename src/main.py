@@ -6,7 +6,6 @@ import requests
 from typing import Optional, List
 from src.database import db
 from .rag import get_default_knowledge_base, RetrievalResult
-from .config import Config
 import sys
 sys.stdout.reconfigure(encoding='utf-8')
 
@@ -54,15 +53,19 @@ def sanitize_input(text):
 
 def get_system_prompt(language="zh-Hant"):
     """Selects the appropriate system prompt based on the language."""
-    # System prompts remain the same
     system_prompts = {
-        "zh-Hant": """你是一個專業的技術顧問，專注於提供工程相關問題的解答。回答應該具體、實用且易於理解。
-                   請優先使用繁體中文回覆，除非使用者以其他語言提問。
-                   提供的建議應包含實踐性的步驟和解決方案。如果不確定答案，請誠實表明。
-                   禁止使用任何形式的代碼塊標記（如```）和emoji來回覆內容，直接以純文字形式提供回答。
-                   提示詞提供的資料皆為資料庫中搜索的內容，請務必根據這些資料來回答使用者的問題，並在回答中引用相關來源，禁止憑空編造資訊以及不要要求使用者自行查詢。若資料不足以回答使用者的問題，請誠實告知並說明缺少哪些資訊。""",
+        "zh-Hant": (
+            "你是一個專業的技術顧問，專注於提供工程相關問題的解答。"
+            "回答應該具體、實用且易於理解。\n"
+            "請優先使用繁體中文回覆，除非使用者以其他語言提問。\n"
+            "提供的建議應包含實踐性的步驟和解決方案。如果不確定答案，請誠實表明。\n"
+            "禁止使用任何形式的代碼塊標記（如```）和emoji來回覆內容，直接以純文字形式提供回答。\n"
+            "提示詞提供的資料皆為資料庫中搜索的內容，請務必根據這些資料來回答使用者的問題，並在回答中引用相關來源，"
+            "禁止憑空編造資訊以及不要要求使用者自行查詢。若資料不足以回答使用者的問題，請誠實告知並說明缺少哪些資訊。"
+        ),
     }
     return system_prompts.get(language, system_prompts["zh-Hant"])
+
 
 class UserData:
     """Stores user conversation history, using a database and in-memory cache."""
@@ -152,6 +155,7 @@ class UserData:
             if user_id in self.user_last_active:
                 del self.user_last_active[user_id]
 
+
 user_data = UserData()
 
 
@@ -173,9 +177,12 @@ class OllamaService:
         # RAG settings
         self.rag_enabled = os.getenv("ENABLE_RAG", "true").lower() not in {"false", "0", "no"}
         self.rag_top_k = self._parse_int(os.getenv("RAG_TOP_K"), default=3)
-        self.rag_min_score = self._parse_float(os.getenv("RAG_MIN_SCORE"), default=0.4) # Increased default for better quality
+        # Increased default for better quality
+        self.rag_min_score = self._parse_float(os.getenv("RAG_MIN_SCORE"), default=0.4)
         self.rag_max_context_chars = max(
-            200, self._parse_int(os.getenv("RAG_MAX_CONTEXT_CHARS"), default=2500) # Increased context size
+            200,
+            # Increased context size
+            self._parse_int(os.getenv("RAG_MAX_CONTEXT_CHARS"), default=2500),
         )
         self.request_timeout = max(
             5.0,
@@ -297,10 +304,12 @@ class OllamaService:
 
         logging.info("RAG retrieved sources:\n%s", "\n".join(sources_for_log))
 
-        context_header = "Based on the retrieved knowledge, here is some relevant information to help answer the user's question. If the information is insufficient, state what is missing."
+        context_header = (
+            "Based on the retrieved knowledge, here is some relevant information to help answer "
+            "the user's question. If the information is insufficient, state what is missing."
+        )
         context = f"{context_header}\n\n" + "\n\n---\n\n".join(formatted_sections)
 
-        
         if len(context) > self.rag_max_context_chars:
             context = context[:self.rag_max_context_chars - 4] + "\n..."
         logging.info("RAG reply: %s", context)
@@ -308,16 +317,21 @@ class OllamaService:
 
     @staticmethod
     def _parse_int(value, default):
-        try: return int(value)
-        except (TypeError, ValueError): return default
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return default
 
     @staticmethod
     def _parse_float(value, default):
-        try: return float(value)
-        except (TypeError, ValueError): return default
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return default
 
     def _prepare_conversation_snapshot(self, conversation):
-        if not conversation: return []
+        if not conversation:
+            return []
 
         max_history = max(1, self.max_conversation_length * 2)
         system_message = conversation[0] if conversation[0].get("role") == "system" else None
@@ -354,8 +368,6 @@ def reply_message(event):
     #     pass
 
     # Use the Ollama service with the integrated RAG to generate a response
-
-
     ollama_service = OllamaService(message=user_message, user_id=user_id)
     response = ollama_service.get_response()
     return response

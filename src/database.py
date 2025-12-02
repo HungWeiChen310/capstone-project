@@ -34,8 +34,8 @@ class Database:
             f"DRIVER={{{Config.DB_ODBC_DRIVER}}};"
             f"SERVER={resolved_server};"
             f"DATABASE={resolved_database};"
-            f"UID={"sa"};"
-            f"PWD={"Qazwsx123"};"
+            f"UID={resolved_user};"
+            f"PWD={resolved_password};"
             "Trusted_Connection=no;"
             "Encrypt=no;"
             "TrustServerCertificate=yes;"
@@ -610,11 +610,15 @@ class Database:
 
     def get_alert_info(self, error_id: int, detected_anomaly_type: str):
         """用 error_id 跟 detected_anomaly_type 取得單筆警報的資訊"""
-        sql = "SELECT equipment_id, detected_anomaly_type FROM alert_history WHERE error_id = ? AND detected_anomaly_type =  ?;"
+        sql = (
+            "SELECT equipment_id, detected_anomaly_type FROM alert_history "
+            "WHERE error_id = ? AND detected_anomaly_type =  ?;"
+        )
         try:
             with self._get_connection() as conn:
                 cursor = conn.cursor()
-                cursor.execute(sql, error_id, detected_anomaly_type)  # 執行SQL查詢 並將 error_id 跟 detected_anomaly_type 作為參數傳入
+                # 執行SQL查詢 並將 error_id 跟 detected_anomaly_type 作為參數傳入
+                cursor.execute(sql, error_id, detected_anomaly_type)
                 row = cursor.fetchone()  # 從查詢結果中取出唯一一筆資料
                 if row:  # 檢查是否有成功取回資料
                     return {"equipment_id": row[0]}
@@ -678,7 +682,12 @@ class Database:
                     "SELECT resolved_time FROM alert_history "
                     "WHERE error_id = ? AND detected_anomaly_type = ? AND equipment_id = ? AND is_resolved = 1;"
                 )
-                cursor.execute(check_sql, log_data['error_id'], log_data['detected_anomaly_type'], log_data['equipment_id'])
+                cursor.execute(
+                    check_sql,
+                    log_data['error_id'],
+                    log_data['detected_anomaly_type'],
+                    log_data['equipment_id']
+                )
                 already_resolved_time = cursor.fetchone()
 
                 if already_resolved_time:
@@ -702,7 +711,11 @@ class Database:
             error_id_val = log_data.get('error_id', 'N/A')   # 取得 error_id 或預設N/A'
             detected_anomaly_type_val = log_data.get('detected_anomaly_type', 'N/A')  # 取得 detected_anomaly_type 或預設N/A'
             equipment_id_val = log_data.get('equipment_id', 'N/A')  # 取得 equipment_id 或預設N/A'
-            logger.error(f"更新警報 (error_id: {error_id_val}), detected_anomaly_type: {detected_anomaly_type_val}) 時發生資料庫錯誤: {ex}")
+            logger.error(
+                f"更新警報 (error_id: {error_id_val}), "
+                f"detected_anomaly_type: {detected_anomaly_type_val}) "
+                f"時發生資料庫錯誤: {ex}"
+            )
             if conn:
                 conn.rollback()
                 logger.warning("交易已回滾。")

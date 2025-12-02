@@ -1,11 +1,13 @@
-﻿from vanna.ollama import Ollama
+from vanna.ollama import Ollama
 from vanna.chromadb import ChromaDB_VectorStore
 from config import Config
+
 
 class MyVanna(ChromaDB_VectorStore, Ollama):
     def __init__(self, config=None):
         ChromaDB_VectorStore.__init__(self, config=config)
         Ollama.__init__(self, config=config)
+
 
 vn = MyVanna(config={'model': 'gpt-oss:20b'})
 resolved_server = Config.DB_SERVER
@@ -15,9 +17,9 @@ connection_string = (
     f"SERVER={resolved_server};"
     f"DATABASE={resolved_database};"
     "Trusted_Connection=yes;"
-        )
+)
 
-vn.connect_to_mssql(odbc_conn_str=connection_string) # You can use the ODBC connection string here
+vn.connect_to_mssql(odbc_conn_str=connection_string)  # You can use the ODBC connection string here
 # The information schema query may need some tweaking depending on your database. This is a good starting point.
 df_information_schema = vn.run_sql("SELECT * FROM INFORMATION_SCHEMA.COLUMNS")
 
@@ -32,7 +34,7 @@ vn.train(plan=plan)
 
 # DDL statements are powerful because they specify table names, colume names, types, and potentially relationships
 
-#--- 情境 1：查詢查詢EQ003在2025年整年三種異常的各類型時數 ---
+# --- 情境 1：查詢查詢EQ003在2025年整年三種異常的各類型時數 ---
 vn.train(ddl="""CREATE TABLE stats_abnormal_yearly (
         [equipment_id] NVARCHAR(255) NOT NULL FOREIGN KEY REFERENCES equipment(equipment_id),
         [year] INT NOT NULL,
@@ -115,9 +117,15 @@ training_data = vn.get_training_data()
 training_data
 
 """## Asking the AI
-Whenever you ask a new question, it will find the 10 most relevant pieces of training data and use it as part of the LLM prompt to generate the SQL.
+Whenever you ask a new question, it will find the 10 most relevant pieces of training data
+and use it as part of the LLM prompt to generate the SQL.
 python"""
 
-results = vn.ask(question="EQ004 在 2025 年 10到12月 三種異常的各類型的時數，用分鐘+秒為單位。如果該異常沒有時數，也必須出現在圖表上。")
+results = vn.ask(
+    question=(
+        "EQ004 在 2025 年 10到12月 三種異常的各類型的時數，用分鐘+秒為單位。"
+        "如果該異常沒有時數，也必須出現在圖表上。"
+    )
+)
 print(results)
 print(type(results))

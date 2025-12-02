@@ -12,10 +12,9 @@ import time
 import json
 import hashlib
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple, Set
+from typing import Dict, Iterable, List, Optional, Sequence, Set
 
 import chromadb
-import numpy as np
 import pyodbc
 import torch
 from sentence_transformers import SentenceTransformer
@@ -171,7 +170,8 @@ class RAGKnowledgeBase:
 
     def _sync_database_documents(self) -> None:
         """Incrementally sync database records to vector store."""
-        if not self._enable_db_ingestion: return
+        if not self._enable_db_ingestion:
+            return
 
         db_instance = self._db_instance
         if not db_instance:
@@ -182,29 +182,29 @@ class RAGKnowledgeBase:
 
         # Simplified data source config
         data_sources = [
-             {
+            {
                 "query": "SELECT * FROM equipment",
                 "table": "equipment",
                 "source_tag": "Equipment",
                 "id_columns": ["equipment_id"],
                 "text_columns": ["name", "equipment_type", "status", "location"],
-                "meta_columns": ["equipment_id", "equipment_type"]
+                "meta_columns": ["equipment_id", "equipment_type"],
             },
-             {
+            {
                 "query": "SELECT TOP 50 * FROM alert_history ORDER BY created_time DESC",
                 "table": "alert_history",
                 "source_tag": "Alert",
                 "id_columns": ["error_id"],
                 "text_columns": ["detected_anomaly_type", "severity_level", "resolution_notes"],
-                "meta_columns": ["equipment_id", "is_resolved"]
-            }
+                "meta_columns": ["equipment_id", "is_resolved"],
+            },
         ]
 
         state = self._load_state()
         db_state = state.get("database", {})
         new_db_state = {}
-        docs_to_add = []
-        ids_processed = set()
+        docs_to_add: List[KnowledgeDocument] = []
+        ids_processed: Set[str] = set()
 
         try:
             with db._get_connection() as conn:
@@ -213,13 +213,19 @@ class RAGKnowledgeBase:
                     try:
                         cursor.execute(source["query"])
                         rows_raw = cursor.fetchall()
-                        if not rows_raw: continue
+                        if not rows_raw:
+                            continue
 
                         row_dicts = self._rows_to_dicts(cursor, rows_raw)
 
                         for row in row_dicts:
-                            doc_id_parts = [str(row.get(c)) for c in source["id_columns"] if row.get(c) not in (None, "")]
-                            if not doc_id_parts: continue
+                            doc_id_parts = [
+                                str(row.get(col))
+                                for col in source["id_columns"]
+                                if row.get(col) not in (None, "")
+                            ]
+                            if not doc_id_parts:
+                                continue
 
                             # Build content
                             content_parts = []
@@ -229,7 +235,8 @@ class RAGKnowledgeBase:
                                     content_parts.append(f"{col.replace('_', ' ').title()}: {val}")
 
                             content = "\n".join(content_parts).strip()
-                            if not content: continue
+                            if not content:
+                                continue
 
                             # Unique ID for this record in DB
                             record_unique_id = f"{source['source_tag']}::{'::'.join(doc_id_parts)}"
@@ -239,7 +246,10 @@ class RAGKnowledgeBase:
                             ids_processed.add(record_unique_id)
 
                             # Check if changed
-                            if record_unique_id not in db_state or db_state[record_unique_id] != current_hash:
+                            if (
+                                record_unique_id not in db_state
+                                or db_state[record_unique_id] != current_hash
+                            ):
                                 # Prepare metadata
                                 metadata = {
                                     "source": source["source_tag"],
@@ -250,9 +260,16 @@ class RAGKnowledgeBase:
                                 }
                                 for col in source["meta_columns"]:
                                     value = _format_value(row.get(col))
-                                    if value: metadata[col] = value
+                                    if value:
+                                        metadata[col] = value
 
-                                docs_to_add.append(KnowledgeDocument(doc_id=record_unique_id, content=content, metadata=metadata))
+                                docs_to_add.append(
+                                    KnowledgeDocument(
+                                        doc_id=record_unique_id,
+                                        content=content,
+                                        metadata=metadata,
+                                    )
+                                )
 
                     except pyodbc.Error as e:
                         logger.error("Failed to ingest MSSQL table '%s': %s", source["table"], e)
@@ -386,7 +403,7 @@ class RAGKnowledgeBase:
 
         files_processed: Set[str] = set()
         docs_to_add: List[KnowledgeDocument] = []
-        files_to_remove_from_db: List[str] = [] # list of relative paths
+        files_to_remove_from_db: List[str] = []  # list of relative paths
 
         for file_path in self._iter_source_files(self._source_paths):
             try:
@@ -412,18 +429,26 @@ class RAGKnowledgeBase:
                 # File changed or new
                 logger.info(f"Detected change in file: {relative_path}")
                 text = file_path.read_text(encoding="utf-8", errors="ignore")
-                chunks = [chunk.strip() for chunk in self._split_into_chunks(text.replace("\r\n", "\n")) if chunk.strip()]
+                chunks = [
+                    chunk.strip()
+                    for chunk in self._split_into_chunks(text.replace("\r\n", "\n"))
+                    if chunk.strip()
+                ]
 
-                if not chunks: continue
+                if not chunks:
+                    continue
 
                 # If file existed before, we must remove its old chunks first
                 if prev_info:
-                     files_to_remove_from_db.append(relative_path)
+                    files_to_remove_from_db.append(relative_path)
 
                 for idx, chunk in enumerate(chunks, 1):
                     metadata = {
-                        "source": relative_path, "chunk_index": str(idx),
-                        "chunk_count": str(len(chunks)), "origin": "text", "source_type": "filesystem",
+                        "source": relative_path,
+                        "chunk_index": str(idx),
+                        "chunk_count": str(len(chunks)),
+                        "origin": "text",
+                        "source_type": "filesystem",
                     }
                     doc_id = f"{relative_path}::chunk-{idx}"
                     docs_to_add.append(KnowledgeDocument(doc_id, chunk, metadata))
@@ -459,10 +484,11 @@ class RAGKnowledgeBase:
 
     def _add_documents_to_collection(self, docs: List[KnowledgeDocument], batch_size: int = 128) -> None:
         """Embeds and adds documents to the Chroma collection in batches."""
-        if not docs: return
+        if not docs:
+            return
 
         for i in range(0, len(docs), batch_size):
-            batch = docs[i : i + batch_size]
+            batch = docs[i:i + batch_size]
             contents = [d.content for d in batch]
             ids = [d.doc_id for d in batch]
             metadatas = [d.metadata for d in batch]
@@ -478,14 +504,18 @@ class RAGKnowledgeBase:
 
     def _iter_source_files(self, paths: Sequence[Path]) -> Iterable[Path]:
         for path in paths:
-            if path.is_file() and self._is_allowed_file(path): yield path
+            if path.is_file() and self._is_allowed_file(path):
+                yield path
             elif path.is_dir():
                 for child in path.rglob("*"):
-                    if child.is_file() and self._is_allowed_file(child): yield child
+                    if child.is_file() and self._is_allowed_file(child):
+                        yield child
 
     def _is_allowed_file(self, file_path: Path) -> bool:
-        if file_path.name.startswith("."): return False
-        if file_path.suffix.lower() not in self.allowed_extensions: return False
+        if file_path.name.startswith("."):
+            return False
+        if file_path.suffix.lower() not in self.allowed_extensions:
+            return False
         try:
             return file_path.stat().st_size <= self.max_file_size
         except OSError:
@@ -502,8 +532,10 @@ class RAGKnowledgeBase:
             yield text[start:end]
             start += self.chunk_size - self.chunk_overlap
 
+
 _default_kb: Optional[RAGKnowledgeBase] = None
 _default_kb_lock = threading.Lock()
+
 
 def get_default_knowledge_base() -> RAGKnowledgeBase:
     """Return a lazily instantiated singleton knowledge base."""

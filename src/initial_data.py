@@ -38,6 +38,7 @@ def _parse_excel_datetime(value):
         return None
     return ts.to_pydatetime()
 
+
 # --- 4. 完整的表格匯入設定 ---
 """
 這是此腳本的設定驅動核心。
@@ -224,7 +225,16 @@ TABLE_CONFIGS = [
     {
         "excel_sheet_name": "user_preferences",
         "sql_table_name": "user_preferences",
-        "sql_columns": ["user_id", "language", "role", "is_admin", "responsible_area", "created_at", "display_name", "last_active"],
+        "sql_columns": [
+            "user_id",
+            "language",
+            "role",
+            "is_admin",
+            "responsible_area",
+            "created_at",
+            "display_name",
+            "last_active",
+        ],
         "transform_row_data": lambda row: (
             str(row.get('user_id')),
             str(row.get('language')) if pd.notna(row.get('language')) else None,

@@ -2,6 +2,7 @@
 import functools
 from flask import session, redirect, url_for, request
 
+
 def admin_required(f):
     @functools.wraps(f)
     def decorated_function(*args, **kwargs):

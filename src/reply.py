@@ -16,7 +16,6 @@ from linebot.v3.messaging import (
 from typing import Callable, List, Tuple
 import logging
 import pyodbc
-import re
 
 logger = logging.getLogger(__name__)
 

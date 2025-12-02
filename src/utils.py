@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 
 SECRET_KEY_FILE = os.getenv("SECRET_KEY_FILE", "data/secret_key.txt")
 
+
 def get_or_create_secret_key():
     """獲取或創建一個固定的 secret key"""
     env_key = os.getenv("SECRET_KEY")
@@ -32,6 +33,7 @@ def get_or_create_secret_key():
     except Exception as e:
         logger.warning(f"無法讀取或寫入密鑰文件: {e}，使用臨時密鑰")
         return secrets.token_hex(24)
+
 
 # Global request counter and lock (thread-safe)
 request_counts = defaultdict(list)
@@ -73,6 +75,7 @@ def rate_limit_check(ip, max_requests=30, window_seconds=60):
             return False
         request_counts[ip].append(current_time)
         return True
+
 
 def _format_value(value: object) -> str:
     """Formats a database value into a consistent string representation."""

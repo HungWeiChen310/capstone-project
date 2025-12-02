@@ -1,7 +1,6 @@
 # src/services/line_service.py
 import os
 import logging
-import threading
 from linebot.v3.messaging import (
     ApiClient,
     Configuration,

@@ -18,6 +18,7 @@ handler = WebhookHandler(channel_secret)
 # Adjust max_workers based on your server's capacity
 executor = ThreadPoolExecutor(max_workers=10, thread_name_prefix="LineBotWorker")
 
+
 @handler.add(MessageEvent, message=TextMessageContent)
 def handle_message(event):
     """
@@ -29,6 +30,7 @@ def handle_message(event):
         executor.submit(process_message_in_background, event)
     except Exception as e:
         logger.error(f"Failed to submit task to thread pool: {e}")
+
 
 def get_handler():
     """Returns the configured WebhookHandler instance."""

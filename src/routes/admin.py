@@ -1,5 +1,5 @@
 # src/routes/admin.py
-from flask import request, session, redirect, url_for, flash, render_template, abort
+from flask import request, session, redirect, url_for, flash, render_template
 from . import admin_bp
 from ..services.auth_service import admin_required
 from ..database import db
@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD")
+
 
 @admin_bp.route("/login", methods=["GET", "POST"])
 def admin_login():

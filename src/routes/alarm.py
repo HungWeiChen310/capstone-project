@@ -8,6 +8,7 @@ import datetime
 
 logger = logging.getLogger(__name__)
 
+
 @alarm_bp.route("/alarms", methods=["POST"])
 def alarms():
     """接收警報訊息"""
@@ -33,6 +34,7 @@ def alarms():
     logger.info("Received JSON from client:", data)
     return jsonify({"status": "success"}), 200
 
+
 @alarm_bp.route("/resolvealarms", methods=["POST"])
 def resolve_alarms():
     """接收警報解決訊息"""
@@ -43,7 +45,11 @@ def resolve_alarms():
     required_keys = ("error_id", "detected_anomaly_type", "equipment_id", "resolved_by")
     if not all(k in data for k in required_keys):
         return jsonify({
-            "status": "error", "message": "Missing required keys: error_id, detected_anomaly_type, equipment_id, resolved_by."
+            "status": "error",
+            "message": (
+                "Missing required keys: error_id, detected_anomaly_type, "
+                "equipment_id, resolved_by."
+            ),
         }), 400
 
     try:

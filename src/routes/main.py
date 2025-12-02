@@ -9,9 +9,11 @@ import logging
 handler = None
 logger = logging.getLogger(__name__)
 
+
 def set_handler(webhook_handler):
     global handler
     handler = webhook_handler
+
 
 @main_bp.route("/callback", methods=["POST"])
 def callback():
@@ -30,6 +32,7 @@ def callback():
         logger.error("無效的簽名")
         abort(400)
     return "OK"
+
 
 @main_bp.route("/")
 def index():
