@@ -143,11 +143,52 @@
 - `RAG_TOP_K`：檢索返回的總片段數
 - `RAG_MIN_SCORE`：最低相似度門檻
 
-2. **安裝依賴套件**  
+2. **安裝依賴套件**
    執行以下指令安裝所需套件：
    ```bash
    pip install -r requirements.txt
    ```
+
+### CachyOS/Arch 安裝指引（SQL Server ODBC 驅動）
+
+在 CachyOS 或 Arch Linux 上使用 `pyodbc` 連線 SQL Server 時，需先安裝編譯環境與 ODBC 前置套件，並確保 Microsoft ODBC Driver 已註冊：
+
+1. 安裝基本工具與 ODBC 核心套件：
+   ```bash
+   sudo pacman -Syu --needed base-devel unixodbc
+   ```
+
+2. 取得 Microsoft ODBC Driver（擇一）：
+   - **AUR**：使用 AUR 助手安裝對應版本驅動與工具。
+     ```bash
+     # 例如使用 yay
+     yay -S msodbcsql17 mssql-tools
+     # 或使用最新的 msodbcsql18
+     yay -S msodbcsql18 mssql-tools
+     ```
+   - **官方套件**：若已設定 Microsoft 的軟體來源，可直接安裝對應套件。
+     ```bash
+     sudo pacman -Syu msodbcsql18 mssql-tools
+     ```
+     （若未設定來源，可參考 Microsoft 官方文件新增簽章金鑰與套件庫，再執行安裝。）
+
+3. 驗證驅動是否註冊：
+   ```bash
+   odbcinst -q -d
+   ```
+   輸出中應能看到 `ODBC Driver 17 for SQL Server` 或 `ODBC Driver 18 for SQL Server`。
+
+4. 常見錯誤排解：
+   - **`Data source name not found, and no default driver specified`**：通常表示驅動未註冊或名稱不符，確認 `/etc/odbcinst.ini` 是否存在對應的 `ODBC Driver 17/18 for SQL Server` 條目。
+   - **架構不符或找不到共享物件**：確認系統為 64 位元，並檢查 `Driver` 指向的 `libmsodbcsql-17.X.so` 或 `libmsodbcsql-18.X.so` 路徑是否存在。
+   - **`pyodbc` 無法偵測到驅動**：在完成安裝與註冊後，可執行
+     ```bash
+     python - <<'PY'
+     import pyodbc
+     print(pyodbc.drivers())
+     PY
+     ```
+     驗證驅動是否出現在列表中。
 
 ## 執行應用
 
