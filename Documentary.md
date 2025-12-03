@@ -227,10 +227,6 @@
    - 移除不必要的套件以減少攻擊面
    - 適當設定檔案權限
 
-**SPECIAL**
-如果在linux上執行記得安裝pyodbc需要的前置unixodbc與ODBC Driver 17 for SQL Server
-sudo pacman -S unixodbc
-
 
 ## CI/CD
 
