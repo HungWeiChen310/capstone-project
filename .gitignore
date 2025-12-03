@@ -205,6 +205,5 @@ header.bin
 length.bin
 link_lists.bin
 src/data/secret_key.txt
-54aefef2-6d57-4a66-a8d4-4a582bbd5c11/index_metadata.pickle
-rag_db/rag_state.json
-rag_db/563e37b2-1da1-4d73-9c43-c5b60ace8eb9/index_metadata.pickle
+index_metadata.pickle
+rag_db/

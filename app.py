@@ -15,6 +15,7 @@ from src.routes.main import set_handler
 
 logger = logging.getLogger(__name__)
 
+
 def create_app(testing=False):
     """創建並配置 Flask 應用程序"""
     try:
@@ -91,6 +92,7 @@ def create_app(testing=False):
         logger.critical(f"應用程序初始化失敗: {e}")
         raise
 
+
 def run_app(host=None, port=None, debug=None, ssl_context=None):
     """運行 Flask 應用程序"""
     host = host or os.environ.get("HOST", "0.0.0.0")
@@ -100,8 +102,14 @@ def run_app(host=None, port=None, debug=None, ssl_context=None):
         os.environ.get('SSL_CERT_PATH', 'chain.pem'),
         os.environ.get('SSL_KEY_PATH', 'key.pem')
     )
-    app = create_app()
-    app.run(host=host, port=port, debug=debug)
+# 根據是否在反向代理後運行來決定是否使用 SSL
+    if bool(os.environ.get('Reverse_Proxy', 'false').lower()):
+        app = create_app()
+        app.run(host=host, port=port, debug=debug)
+    else:
+        app = create_app()
+        app.run(host=host, port=port, debug=debug, ssl_context=ssl_context)
+
 
 if __name__ == "__main__":
     run_app()
