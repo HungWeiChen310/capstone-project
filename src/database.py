@@ -29,17 +29,26 @@ class Database:
         # if not resolved_user or not resolved_password:
         #    logger.error("缺少 DB_USER 或 DB_PASSWORD，無法使用帳號密碼登入 SQL Server。")
         #    raise ValueError("DB_USER 與 DB_PASSWORD 為必填，請確認環境變數設定。")
-
-        self.connection_string = (
-            f"DRIVER={{{Config.DB_ODBC_DRIVER}}};"
-            f"SERVER={resolved_server};"
-            f"DATABASE={resolved_database};"
-            f"UID={resolved_user};"
-            f"PWD={resolved_password};"
-            "Trusted_Connection=no;"
-            "Encrypt=no;"
-            "TrustServerCertificate=yes;"
-        )
+        logger.info("初始化資料庫連線字串...")
+        logger.info(f"使用的伺服器: {(os.getenv('Windows_login')).lower()}, 伺服器: {resolved_server}, 資料庫: {resolved_database}")
+        if bool(os.getenv("Windows_login")) is False:
+            self.connection_string = (
+                f"DRIVER={{{Config.DB_ODBC_DRIVER}}};"
+                f"SERVER={resolved_server};"
+                f"DATABASE={resolved_database};"
+                f"UID={resolved_user};"
+                f"PWD={resolved_password};"
+                "Trusted_Connection=no;"
+                "Encrypt=no;"
+                "TrustServerCertificate=yes;"
+            )
+        else:
+            self.connection_string = (
+                "DRIVER={ODBC Driver 17 for SQL Server};"
+                f"SERVER={resolved_server};"
+                f"DATABASE={resolved_database};"
+                "Trusted_Connection=yes;"
+            )
         self._initialize_db()
 
     def _get_connection(self):

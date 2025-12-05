@@ -373,7 +373,7 @@ class RAGKnowledgeBase:
             # A score of 1 is a perfect match (distance 0).
             score = 1.0 / (1.0 + distance)
             logger.info(f"Retrieved doc_id={doc_id} with distance={distance}, score={score}")
-            if score >= min_score:
+            if score <= min_score:
                 doc = KnowledgeDocument(doc_id=doc_id, content=content, metadata=metadata)
                 processed.append(RetrievalResult(document=doc, score=score))
         return processed

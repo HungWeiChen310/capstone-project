@@ -23,6 +23,7 @@ def create_app(testing=False):
         try:
             Config.validate()
             logger.info("環境變數驗證成功")
+            
         except ValueError as e:
             if not testing:
                 logger.critical("環境變數驗證失敗，程序將終止: %s", e)
@@ -98,12 +99,19 @@ def run_app(host=None, port=None, debug=None, ssl_context=None):
     host = host or os.environ.get("HOST", "0.0.0.0")
     port = port or int(os.environ.get("PORT", 443))
     debug = debug or (os.environ.get("FLASK_DEBUG", "False").lower() == "true")
-    ssl_context = ssl_context or (
-        os.environ.get('SSL_CERT_PATH', 'chain.pem'),
-        os.environ.get('SSL_KEY_PATH', 'key.pem')
-    )
+    try:
+        ssl_context = (
+            os.environ.get('SSL_CERT_PATH', 'chain.pem'),
+            os.environ.get('SSL_KEY_PATH', 'key.pem')
+        )
+    except:
+        pass
 # 根據是否在反向代理後運行來決定是否使用 SSL
-    if bool(os.environ.get('Reverse_Proxy', 'false').lower()):
+    logger.info("啟動應用程序，反向代理模式: %s", os.environ.get('Reverse_Proxy', 'true'))
+    logger.info("主機: %s, 端口: %d, 調試模式: %s", host, port, debug)
+    logger.info("SSL 證書: %s, SSL 密鑰: %s", ssl_context[0] if ssl_context else None, ssl_context[1] if ssl_context else None)
+    if os.environ.get('Reverse_Proxy')=='true':
+        logger.info("在反向代理後運行，禁用 SSL")
         app = create_app()
         app.run(host=host, port=port, debug=debug)
     else:
