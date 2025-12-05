@@ -197,3 +197,13 @@ cython_debug/
 # OS specific files
 .DS_Store
 Thumbs.db
+chroma.sqlite3
+
+
+data_level0.bin
+header.bin
+length.bin
+link_lists.bin
+src/data/secret_key.txt
+index_metadata.pickle
+rag_db/

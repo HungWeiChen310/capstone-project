@@ -2,14 +2,16 @@
 
 ## 概述
 
-本專案整合 [LINE Messaging API](https://developers.line.biz/zh-hant/)、[OpenAI ChatCompletion](https://platform.openai.com/docs/guides/chat) (ChatGPT) 與半導體設備監控系統，打造一個多功能智能助理。系統可在 LINE 平台上即時提供工程技術支援與諮詢。此外，系統能即時監控半導體設備，自動偵測異常並通過 LINE 機器人發送警報通知。系統包含完整的使用者數據儲存、分析功能以及管理後台。
+本專案整合 [LINE Messaging API](https://developers.line.biz/zh-hant/)、[Ollama](https://ollama.com/) (運行 Llama 3 / gpt-oss:20b 模型) 與半導體設備監控系統，打造一個多功能智能助理。系統可在 LINE 平台上即時提供工程技術支援與諮詢。此外，系統能即時監控半導體設備，自動偵測異常並通過 LINE 機器人發送警報通知。系統包含完整的使用者數據儲存、分析功能以及管理後台，並透過 RAG (Retrieval-Augmented Generation) 技術結合本地知識庫提供更精準的回答。
 
 ## 技術棧
 
 - **Python 3.11**：專案主要開發語言，基於最新穩定版本
 - **Flask**：輕量級後端 Web 框架，處理 API 請求與網頁展示
 - **line-bot-sdk v3.x**：整合 LINE Bot API，處理訊息接收與回覆
-- **OpenAI API**：調用 ChatGPT 模型生成智能回覆
+- **Ollama**：本地運行的大型語言模型服務，提供智能對話能力
+- **ChromaDB**：開源向量資料庫，用於儲存 RAG 系統的知識向量
+- **SentenceTransformers**：用於將文本轉換為向量表示 (`paraphrase-multilingual-mpnet-base-v2`)
 - **SQL Server**：關聯式資料庫，儲存對話歷史、使用者偏好與設備數據
 - **Schedule**：簡易任務排程，用於定期設備監控
 - **Flask-Talisman**：實作內容安全政策(CSP)與其他安全防護
@@ -20,15 +22,18 @@
 
 1. **LINE 訊息處理**  
    - 利用 `/callback` Webhook 接收並驗證 LINE 傳來的事件
-   - 根據使用者訊息，調用 OpenAI ChatCompletion API 生成專業回覆
+   - 根據使用者訊息，調用 Ollama API 生成專業回覆
    - 實作訊息輸入驗證與清理，防止潛在的 XSS 攻擊
    - 支援快速回覆、按鈕模板等 LINE 互動元素
 
-2. **智能對話生成**  
-   - 根據預先定義的系統提示，結合使用者輸入生成邏輯嚴謹的回應
+2. **智能對話生成**
+   - 整合 Ollama 服務，使用 `gpt-oss:20b` 等模型生成邏輯嚴謹的回應
    - 維護對話歷史紀錄，提供上下文相關的回覆
    - 支援多語言回覆，包含繁體中文、簡體中文、英文、日文和韓文
-   - 使用記憶體快取與資料庫儲存的混合策略，優化對話處理效能
+   - **檢索增強生成 (RAG)**：
+     - 使用 `SentenceTransformers` 將使用者問題轉換為向量
+     - 透過 `ChromaDB` 在本地知識庫中檢索相關文件與資料庫記錄
+     - 將檢索到的資訊作為上下文注入模型提示，提升回答準確度
 
 4. **半導體設備監控**  
    - 即時監控各類半導體設備（黏晶機、打線機、切割機）的運作狀態與關鍵指標
@@ -75,23 +80,24 @@
 
 ```
 .
-├── src/
-│   ├── __init__.py               # Python 包初始化檔案
-│   ├── app.py                    # Flask 應用程式創建與配置
-│   ├── config.py                 # 集中式配置管理模組
-│   ├── main.py                   # 核心業務邏輯與 OpenAI 服務封裝
-│   ├── linebot_connect.py        # LINE Bot 事件處理與路由註冊
-│   ├── database.py               # 資料庫互動模組
-│   ├── analytics.py              # 數據分析與統計模組
-│   ├── equipment_monitor.py      # 半導體設備監控與異常偵測器
+├── app.py                      # Flask 應用程式進入點
+├── src/                          # 主要源碼
+│   ├── __init__.py               # Python 包初始化
+│   ├── routes/                   # 路由模組 (Blueprints)
+│   ├── services/                 # 業務邏輯模組
+│   ├── utils.py                  # 工具函數
+│   ├── config.py                 # 集中式配置管理
+│   ├── main.py                   # 核心邏輯與 Ollama 服務
+│   ├── rag.py                    # RAG 系統核心 (ChromaDB)
+│   ├── linebot_connect.py        # LINE Bot 事件處理
+│   ├── database.py               # 資料庫操作
+│   ├── analytics.py              # 數據分析模組
+│   ├── equipment_monitor.py      # 設備監控與異常偵測
 │   ├── equipment_scheduler.py    # 設備監控排程器
 │   ├── event_system.py           # 事件發布/訂閱系統
-│   └── initial_data.py           # 初始設備資料生成腳本
-├── templates/
-│   ├── index.html                # 服務狀態頁面
-│   ├── admin_dashboard.html      # 管理後台儀表板
-│   ├── admin_login.html          # 管理員登入頁面
-│   └── admin_conversation.html   # 對話記錄查詢頁面
+│   └── initial_data.py           # 初始資料生成
+├── rag_db/                       # 向量資料庫儲存位置
+├── templates/                    # HTML 模板
 ├── .github/
 │   └── workflows/
 │       └── main.yml              # GitHub Actions CI/CD 設定檔
@@ -109,8 +115,11 @@
 
 1. **環境變數設定**  
    依照 `.env.example` 建立 `.env` 檔案，設定下列必要環境變數：
-   - **OpenAI 相關：**
-     - `OPENAI_API_KEY`：你的 OpenAI API 金鑰
+   - **Ollama (AI 模型) 相關：**
+     - `OLLAMA_HOST`：Ollama 服務主機 IP (預設 127.0.0.1)
+     - `OLLAMA_PORT`：Ollama 服務埠號 (預設 11434)
+     - `OLLAMA_MODEL`：使用的模型名稱 (預設 gpt-oss:20b)
+     - `OLLAMA_TIMEOUT`：API 請求超時時間
    - **LINE Bot 相關：**
      - `LINE_CHANNEL_ACCESS_TOKEN`：LINE Bot 存取金鑰
      - `LINE_CHANNEL_SECRET`：LINE Bot 密鑰
@@ -122,19 +131,76 @@
      - `ADMIN_USERNAME`：管理員帳號
      - `ADMIN_PASSWORD`：管理員密碼
      - `SECRET_KEY`：Flask session 密鑰，用於管理員登入
+   - **資料庫設定：**
+     - `DB_SERVER`：資料庫伺服器位址 (預設 localhost)
+     - `DB_NAME`：資料庫名稱 (預設 Project)
+     - `DB_USER` / `DB_PASSWORD`：需要帳號密碼時填寫
+     - `DB_ODBC_DRIVER`：ODBC 驅動名稱 (預設 `ODBC Driver 17 for SQL Server`，若系統安裝 msodbcsql18 請設定為 `ODBC Driver 18 for SQL Server`)
 
-2. **安裝依賴套件**  
+### RAG 相關設定
+
+- `ENABLE_RAG`：是否啟用 RAG 功能
+- `ENABLE_RAG_DB`：是否將資料庫內容同步至知識庫 (預設 true)
+- `RAG_SOURCE_PATHS`：以作業系統的路徑分隔符號分隔，可覆寫預設的知識庫來源
+- `RAG_CHUNK_SIZE`：文件切片大小 (預設 500)
+- `RAG_CHUNK_OVERLAP`：文件切片重疊 (預設 100)
+- `RAG_DB_TOP_K`：檢索時從資料庫返回的記錄數
+- `RAG_TOP_K`：檢索返回的總片段數
+- `RAG_MIN_SCORE`：最低相似度門檻
+
+2. **安裝依賴套件**
    執行以下指令安裝所需套件：
    ```bash
    pip install -r requirements.txt
    ```
+
+### CachyOS/Arch 安裝指引（SQL Server ODBC 驅動）
+
+在 CachyOS 或 Arch Linux 上使用 `pyodbc` 連線 SQL Server 時，需先安裝編譯環境與 ODBC 前置套件，並確保 Microsoft ODBC Driver 已註冊：
+
+1. 安裝基本工具與 ODBC 核心套件：
+   ```bash
+   sudo pacman -Syu --needed base-devel unixodbc
+   ```
+
+2. 取得 Microsoft ODBC Driver（擇一）：
+   - **AUR**：使用 AUR 助手安裝對應版本驅動與工具。
+     ```bash
+     # 例如使用 yay
+     yay -S msodbcsql17 mssql-tools
+     # 或使用最新的 msodbcsql18
+     yay -S msodbcsql18 mssql-tools
+     ```
+   - **官方套件**：若已設定 Microsoft 的軟體來源，可直接安裝對應套件。
+     ```bash
+     sudo pacman -Syu msodbcsql18 mssql-tools
+     ```
+     （若未設定來源，可參考 Microsoft 官方文件新增簽章金鑰與套件庫，再執行安裝。）
+
+3. 驗證驅動是否註冊：
+   ```bash
+   odbcinst -q -d
+   ```
+   輸出中應能看到 `ODBC Driver 17 for SQL Server` 或 `ODBC Driver 18 for SQL Server`。
+
+4. 常見錯誤排解：
+   - **`Data source name not found, and no default driver specified`**：通常表示驅動未註冊或名稱不符，確認 `/etc/odbcinst.ini` 是否存在對應的 `ODBC Driver 17/18 for SQL Server` 條目。
+   - **架構不符或找不到共享物件**：確認系統為 64 位元，並檢查 `Driver` 指向的 `libmsodbcsql-17.X.so` 或 `libmsodbcsql-18.X.so` 路徑是否存在。
+   - **`pyodbc` 無法偵測到驅動**：在完成安裝與註冊後，可執行
+     ```bash
+     python - <<'PY'
+     import pyodbc
+     print(pyodbc.drivers())
+     PY
+     ```
+     驗證驅動是否出現在列表中。
 
 ## 執行應用
 
 1. **本地執行**  
    啟動 Flask 應用：
    ```bash
-   python -m src.app
+   python app.py
    ```
    - LINE Webhook 接收端點為 `/callback`
    - 服務狀態頁面：`https://localhost:5000/`
@@ -147,7 +213,7 @@
    ```bash
    docker build -t capstone-project .
    docker run -p 5000:5000 \
-     -e OPENAI_API_KEY="your_openai_api_key" \
+     -e OLLAMA_HOST="120.105.18.33" \
      -e LINE_CHANNEL_ACCESS_TOKEN="your_line_access_token" \
      -e LINE_CHANNEL_SECRET="your_line_channel_secret" \
      -e ADMIN_USERNAME="your_admin_username" \
@@ -160,6 +226,7 @@
    - 使用非 root 用戶運行應用程式
    - 移除不必要的套件以減少攻擊面
    - 適當設定檔案權限
+
 
 ## CI/CD
 
@@ -205,7 +272,7 @@
 管理後台提供以下功能：
 
 - **儀表板**：顯示系統使用統計，包括總訊息數、用戶數、過去24小時活動等
-- **系統狀態**：監控 OpenAI API、LINE Bot API 與 PowerBI 設定的連接狀態
+- **系統狀態**：監控 Ollama 服務、LINE Bot API 與 RAG 系統的連接狀態
 - **近期對話**：查看最近活躍的用戶及其對話摘要
 - **對話記錄**：查看特定用戶的完整對話歷史
 - **設備監控概況**：提供設備監控的總體視圖，包括警告與嚴重問題
@@ -253,8 +320,8 @@
    - **alert_history**：儲存警報歷史（警報類型、嚴重程度、狀態等）
    - **user_equipment_subscriptions**：儲存使用者設備訂閱關係
 
-7. **整合 OpenAI**
-   - 使用 OpenAI 分析異常情況，生成對應的解釋與建議
+7. **整合 AI 分析**
+   - 使用 Ollama 分析異常情況，生成對應的解釋與建議
    - 根據設備特性提供專業的建議，協助技術人員快速解決問題
 
 ## 事件系統
@@ -281,27 +348,6 @@
    - 事件處理中的錯誤不會影響整個系統運行
    - 所有事件處理錯誤會被記錄到日誌中
    - 錯誤隔離確保一個處理器失敗不影響其他處理器
-
-5. **實作範例**
-   ```python
-   from src.event_system import event_system
-   
-   # 註冊事件處理器
-   def handle_equipment_alert(equipment_id, severity, message):
-       # 處理設備警報
-       print(f"警報: {equipment_id} - {severity} - {message}")
-   
-   # 訂閱事件
-   event_system.subscribe('equipment_alert', handle_equipment_alert)
-   
-   # 發布事件
-   event_system.publish(
-       'equipment_alert',
-       equipment_id='DB001',
-       severity='warning',
-       message='溫度過高'
-   )
-   ```
 
 ## 集中式應用程序管理
 
@@ -363,7 +409,7 @@
 1. **API 安全**
    - 所有 API 金鑰與敏感資訊均通過環境變數管理，不直接寫入程式碼
    - 實作 LINE 簽名驗證，確保請求來源
-   - PowerBI 整合使用 OAuth2 客戶端憑證流程，不暴露敏感資訊
+   - 不直接暴露 AI 服務連接埠，而是透過後端代理轉發
 
 2. **網頁安全**
    - 使用 Flask-Talisman 實作嚴格的內容安全政策(CSP)
@@ -402,7 +448,7 @@
    - 檢查是否使用了 ngrok 等工具進行本地測試，可能影響 HTTPS 標頭
 
 2. **API 回覆異常**  
-   - 驗證 `OPENAI_API_KEY` 是否正確，並檢查 API 調用是否超出使用配額
+   - 驗證 `OLLAMA_HOST` 連線正常，確認模型 `gpt-oss:20b` 已正確下載 (ollama list)
    - 查看應用程式日誌中的詳細錯誤訊息
    - 確認網路連線是否穩定，特別是在容器化環境中
 
@@ -414,7 +460,7 @@
 5. **Docker 部署問題**
    - 確認已正確設置所有必要的環境變數
    - 檢查容器日誌以獲取詳細的錯誤訊息
-   - 確認 Docker 主機的網路設定允許容器連接外部 API（OpenAI、LINE、PowerBI）
+   - 確認 Docker 主機的網路設定允許容器連接外部服務
 
 6. **資料庫相關問題**
    - 確認 SQL Server 連線字串設定正確

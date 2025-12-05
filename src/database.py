@@ -1,8 +1,16 @@
 import logging
 import os
+import sys
 import pyodbc
 import datetime
-from config import Config
+
+if __package__ is None or __package__ == "":
+    import pathlib
+
+    sys.path.append(str(pathlib.Path(__file__).resolve().parent.parent))
+    __package__ = "src"
+
+from .config import Config
 
 
 logger = logging.getLogger(__name__)
@@ -11,16 +19,36 @@ logger = logging.getLogger(__name__)
 class Database:
     """處理對話記錄與使用者偏好儲存的資料庫處理程序"""
 
-    def __init__(self, server=None, database=None):
+    def __init__(self, server=None, database=None, user=None, password=None):
         """初始化資料庫連線"""
         resolved_server = server if server is not None else Config.DB_SERVER
         resolved_database = database if database is not None else Config.DB_NAME
-        self.connection_string = (
-            "DRIVER={ODBC Driver 17 for SQL Server};"
-            f"SERVER={resolved_server};"
-            f"DATABASE={resolved_database};"
-            "Trusted_Connection=yes;"
-        )
+        resolved_user = user if user is not None else Config.DB_USER
+        resolved_password = password if password is not None else Config.DB_PASSWORD
+
+        # if not resolved_user or not resolved_password:
+        #    logger.error("缺少 DB_USER 或 DB_PASSWORD，無法使用帳號密碼登入 SQL Server。")
+        #    raise ValueError("DB_USER 與 DB_PASSWORD 為必填，請確認環境變數設定。")
+        logger.info("初始化資料庫連線字串...")
+        logger.info(f"使用的伺服器: {(os.getenv('Windows_login')).lower()}, 伺服器: {resolved_server}, 資料庫: {resolved_database}")
+        if bool(os.getenv("Windows_login")) is False:
+            self.connection_string = (
+                f"DRIVER={{{Config.DB_ODBC_DRIVER}}};"
+                f"SERVER={resolved_server};"
+                f"DATABASE={resolved_database};"
+                f"UID={resolved_user};"
+                f"PWD={resolved_password};"
+                "Trusted_Connection=no;"
+                "Encrypt=no;"
+                "TrustServerCertificate=yes;"
+            )
+        else:
+            self.connection_string = (
+                "DRIVER={ODBC Driver 17 for SQL Server};"
+                f"SERVER={resolved_server};"
+                f"DATABASE={resolved_database};"
+                "Trusted_Connection=yes;"
+            )
         self._initialize_db()
 
     def _get_connection(self):
@@ -55,19 +83,19 @@ class Database:
                     [equipment_id] NVARCHAR(255) NOT NULL PRIMARY KEY,
                     [name] NVARCHAR(255) NOT NULL,
                     [equipment_type] NVARCHAR(255) NULL,
-                    [status] NVARCHAR(255) NULL,
+                    [location] NVARCHAR(255) NULL,
+                    [status] NVARCHAR(255) NOT NULL,
                     [last_updated] datetime2(2) NULL
                 """
                 self._create_table_if_not_exists(init_cur, "equipment", equipment_cols)
 
                 # 3. conversations
                 conversations_cols = """
-                    [message_id] NVARCHAR(255) NOT NULL PRIMARY KEY,
-                    [sender_id] NVARCHAR(255) NOT NULL FOREIGN KEY REFERENCES user_preferences(user_id),
-                    [receiver_id] NVARCHAR(255) NULL,
-                    [sender_role] NVARCHAR(50) NULL,
+                    [sender_id] NVARCHAR(255) NOT NULL ,
+                    [receiver_id] NVARCHAR(255) NOT NULL,
+                    [sender_role] NVARCHAR(50) NOT NULL,
                     [content] NVARCHAR(MAX) NOT NULL,
-                    [timestamp] datetime2(2) NULL DEFAULT GETDATE()
+                    [timestamp] datetime2(2) NOT NULL DEFAULT GETDATE()
                 """
                 self._create_table_if_not_exists(init_cur, "conversations", conversations_cols)
 
@@ -92,8 +120,8 @@ class Database:
                 alert_history_cols = """
                     [error_id] INT NOT NULL PRIMARY KEY,
                     [equipment_id] NVARCHAR(255) NOT NULL FOREIGN KEY REFERENCES equipment(equipment_id),
-                    [alert_type] NVARCHAR(255) NULL,
-                    [severity] NVARCHAR(255) NULL,
+                    [detected_anomaly_type] NVARCHAR(255) NULL,
+                    [severity_level] NVARCHAR(255) NULL,
                     [is_resolved] BIT NULL DEFAULT 0,
                     [created_time] datetime2(2) NULL,
                     [resolved_time] datetime2(2) NULL,
@@ -118,7 +146,6 @@ class Database:
                 self._create_table_if_not_exists(init_cur, "equipment_metrics", equipment_metrics_cols)
 
                 # 7. equipment_metric_thresholds
-                # --- 關鍵修正 2: 新增了 normal_value 欄位 ---
                 equipment_metric_thresholds_cols = """
                     [metric_type] NVARCHAR(50) NOT NULL PRIMARY KEY,
                     [normal_value] FLOAT NULL,
@@ -148,7 +175,7 @@ class Database:
                     [detected_anomaly_type] NVARCHAR(MAX) NOT NULL,
                     [downtime_sec] INT NULL,
                     [resolved_time] datetime2(2) NULL,
-                    [notes] NVARCHAR(MAX) NULL
+                    [severity_level] NVARCHAR(MAX) NULL
                 """
 
                 self._create_table_if_not_exists(init_cur, "error_logs", error_logs_cols)
@@ -160,7 +187,7 @@ class Database:
                     [month] INT NOT NULL,
                     [detected_anomaly_type] NVARCHAR(255) NOT NULL,
                     [total_operation_hrs] INT NULL,
-                    [downtime_hrs] FLOAT NULL,
+                    [downtime_sec] INT NULL,
                     [downtime_rate_percent] NVARCHAR(255) NULL,
                     [notes] NVARCHAR(MAX) NULL,
                     PRIMARY KEY (equipment_id, year, month, detected_anomaly_type)
@@ -174,7 +201,7 @@ class Database:
                     [quarter] INT NOT NULL,
                     [detected_anomaly_type] NVARCHAR(255) NOT NULL,
                     [total_operation_hrs] INT NULL,
-                    [downtime_hrs] FLOAT NULL,
+                    [downtime_sec] INT NULL,
                     [downtime_rate_percent] NVARCHAR(255) NULL,
                     [notes] NVARCHAR(MAX) NULL,
                     PRIMARY KEY (equipment_id, year, quarter, detected_anomaly_type)
@@ -187,7 +214,7 @@ class Database:
                     [year] INT NOT NULL,
                     [detected_anomaly_type] NVARCHAR(255) NOT NULL,
                     [total_operation_hrs] INT NULL,
-                    [downtime_hrs] FLOAT NULL,
+                    [downtime_sec] INT NULL,
                     [downtime_rate_percent] NVARCHAR(255) NULL,
                     [notes] NVARCHAR(MAX) NULL,
                     PRIMARY KEY (equipment_id, year, detected_anomaly_type)
@@ -200,7 +227,7 @@ class Database:
                     [year] INT NOT NULL,
                     [month] INT NOT NULL,
                     [total_operation_hrs] INT NULL,
-                    [downtime_hrs] FLOAT NULL,
+                    [downtime_sec] INT NULL,
                     [downtime_rate_percent] NVARCHAR(255) NULL,
                     [notes] NVARCHAR(MAX) NULL,
                     PRIMARY KEY (equipment_id, year, month)
@@ -213,7 +240,7 @@ class Database:
                     [year] INT NOT NULL,
                     [quarter] INT NOT NULL,
                     [total_operation_hrs] INT NULL,
-                    [downtime_hrs] FLOAT NULL,
+                    [downtime_sec] INT NULL,
                     [downtime_rate_percent] NVARCHAR(255) NULL,
                     [notes] NVARCHAR(MAX) NULL,
                     PRIMARY KEY (equipment_id, year, quarter)
@@ -229,7 +256,7 @@ class Database:
                     [equipment_id] NVARCHAR(255) NOT NULL,
                     [year] INT NOT NULL,
                     [total_operation_hrs] INT NULL,
-                    [downtime_hrs] FLOAT NULL,
+                    [downtime_sec] INT NULL,
                     [downtime_rate_percent] NVARCHAR(255) NULL,
                     [notes] NVARCHAR(MAX) NULL,
                     PRIMARY KEY (equipment_id, year),
@@ -241,6 +268,7 @@ class Database:
                 logger.info(
                     "資料庫表格初始化/檢查完成 (已建立主鍵與外鍵約束)。"
                 )
+            self._ensure_system_user()
         except pyodbc.Error as e:
             logger.exception(f"資料庫初始化期間發生 pyodbc 錯誤: {e}")
             raise
@@ -261,6 +289,29 @@ class Database:
             logger.info(f"資料表 '{table_name}' 已建立。")
         else:
             logger.info(f"資料表 '{table_name}' 已存在，跳過建立。")
+
+    def _ensure_system_user(self):
+        """Ensure the system bot account exists for conversation history."""
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT COUNT(*) FROM user_preferences WHERE user_id = ?;",
+                    ("bot",),
+                )
+                if cursor.fetchone()[0] == 0:
+                    cursor.execute(
+                        """
+                        INSERT INTO user_preferences
+                            (user_id, language, role, is_admin, responsible_area,
+                             created_at, display_name, last_active)
+                        VALUES (?, ?, ?, 0, NULL, GETDATE(), ?, GETDATE());
+                        """,
+                        ("bot", "zh-Hant", "assistant", "System Bot"),
+                    )
+                    conn.commit()
+        except pyodbc.Error as e:
+            logger.exception(f"確保系統 bot 使用者存在時發生錯誤: {e}")
 
     def add_message(self, sender_id, receiver_id, sender_role, content):
         """加入一筆新的對話記錄（包含發送者角色）"""
@@ -301,7 +352,7 @@ class Database:
                 # 從資料庫讀取是 DESC，但通常聊天室顯示是 ASC (舊的在上面)
                 # 所以先 reverse
                 messages = [
-                    # 統一鍵名為 'role' 以符合 OpenAI 格式
+                    # 統一鍵名為 'role' 以符合 Ollama 格式
                     {"role": sender_role, "content": content}
                     for sender_role, content in conv_hist_cur.fetchall()
                 ]
@@ -505,15 +556,15 @@ class Database:
         """
         sql_alert_history = """
             INSERT INTO alert_history (
-                error_id, equipment_id, alert_type,
-                severity, created_time
+                error_id, equipment_id, detected_anomaly_type,
+                severity_level, created_time
             ) VALUES (?, ?, ?, ?, ?);
         """
         # 新增 error_log 寫入統計資料
         sql_error_log = """
             INSERT INTO error_logs (
                 log_date, error_id, equipment_id, deformation_mm,
-                rpm, event_time, detected_anomaly_type, notes
+                rpm, event_time, detected_anomaly_type, severity_level
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?);
         """
         # 取得目前最大的 error_id，並加 1 作為新的 error_id
@@ -534,8 +585,8 @@ class Database:
             cursor.execute(sql_alert_history,
                            latest_error_id,
                            log_data["equipment_id"],
-                           log_data["alert_type"],
-                           log_data["severity"],
+                           log_data["detected_anomaly_type"],
+                           log_data["severity_level"],
                            event_time
                            )
 
@@ -547,8 +598,8 @@ class Database:
                            log_data.get("deformation_mm", 0),
                            log_data.get("rpm", 30000),  # 預設30000
                            event_time,
-                           log_data["alert_type"],
-                           log_data["severity"]
+                           log_data["detected_anomaly_type"],
+                           log_data["severity_level"]
                            )
 
             conn.commit()
@@ -566,26 +617,30 @@ class Database:
             if conn:
                 conn.close()
 
-    def get_alert_info(self, error_id: int, alert_type: str):
-        """用 error_id 跟 alert_type 取得單筆警報的資訊"""
-        sql = "SELECT equipment_id, alert_type FROM alert_history WHERE error_id = ? AND alert_type =  ?;"
+    def get_alert_info(self, error_id: int, detected_anomaly_type: str):
+        """用 error_id 跟 detected_anomaly_type 取得單筆警報的資訊"""
+        sql = (
+            "SELECT equipment_id, detected_anomaly_type FROM alert_history "
+            "WHERE error_id = ? AND detected_anomaly_type =  ?;"
+        )
         try:
             with self._get_connection() as conn:
                 cursor = conn.cursor()
-                cursor.execute(sql, error_id, alert_type)  # 執行SQL查詢 並將 error_id 跟 alert_type 作為參數傳入
+                # 執行SQL查詢 並將 error_id 跟 detected_anomaly_type 作為參數傳入
+                cursor.execute(sql, error_id, detected_anomaly_type)
                 row = cursor.fetchone()  # 從查詢結果中取出唯一一筆資料
                 if row:  # 檢查是否有成功取回資料
                     return {"equipment_id": row[0]}
                 return None
         except pyodbc.Error as e:
-            logger.error(f"查詢警報資訊 (error_id: {error_id}), alert_type: {alert_type}) 失敗: {e}")
+            logger.error(f"查詢警報資訊 (error_id: {error_id}), detected_anomaly_type: {detected_anomaly_type}) 失敗: {e}")
             return None
 
     def resolve_alert_history(self, log_data: dict):
         """
         將指定的警報紀錄更新為已解決狀態
         """
-        # 更新指定 alert_history 欄位內容，依照 error_id 跟 alert_type 跟 equipment_id 作為條件
+        # 更新指定 alert_history 欄位內容，依照 error_id 跟 detected_anomaly_type 跟 equipment_id 作為條件
         sql_alert_history = """
         UPDATE alert_history
            SET is_resolved = 1,
@@ -593,7 +648,7 @@ class Database:
                resolved_by = ?,
                resolution_notes = ?
         OUTPUT inserted.resolved_time
-         WHERE error_id = ? AND alert_type = ? AND equipment_id = ? AND (is_resolved = 0);
+         WHERE error_id = ? AND detected_anomaly_type = ? AND equipment_id = ? AND (is_resolved = 0);
         """
         # 更新指定 error_logs 欄位內容
         sql_error_log = """
@@ -614,7 +669,7 @@ class Database:
                            log_data["resolved_by"],
                            notes,
                            log_data["error_id"],
-                           log_data["alert_type"],
+                           log_data["detected_anomaly_type"],
                            log_data["equipment_id"]
                            )
 
@@ -626,7 +681,7 @@ class Database:
                 conn.commit()
                 logger.info(
                     f"成功將 error_id: {log_data['error_id']} / "
-                    f"alert_type: {log_data['alert_type']} / "
+                    f"detected_anomaly_type: {log_data['detected_anomaly_type']} / "
                     f"equipment_id: {log_data['equipment_id']} 的警報標示為已解決。"
                 )
                 return newly_resolved_time[0]
@@ -634,9 +689,14 @@ class Database:
                 # 檢查這筆警報是否是已解決
                 check_sql = (
                     "SELECT resolved_time FROM alert_history "
-                    "WHERE error_id = ? AND alert_type = ? AND equipment_id = ? AND is_resolved = 1;"
+                    "WHERE error_id = ? AND detected_anomaly_type = ? AND equipment_id = ? AND is_resolved = 1;"
                 )
-                cursor.execute(check_sql, log_data['error_id'], log_data['alert_type'], log_data['equipment_id'])
+                cursor.execute(
+                    check_sql,
+                    log_data['error_id'],
+                    log_data['detected_anomaly_type'],
+                    log_data['equipment_id']
+                )
                 already_resolved_time = cursor.fetchone()
 
                 if already_resolved_time:
@@ -644,23 +704,27 @@ class Database:
                     logger.info(
                         f"嘗試解決的 error_id: {log_data['error_id']} / "
                         f"equipment_id: {log_data['equipment_id']} / "
-                        f"alert_type: {log_data['alert_type']} 先前已被解決。"
+                        f"detected_anomaly_type: {log_data['detected_anomaly_type']} 先前已被解決。"
                     )
                     return (already_resolved_time[0], "already_resolved")
                 else:
                     # 資料庫不存在這筆 error_id
                     logger.warning(
                         f"嘗試更新警報，但找不到對應的 error_id: {log_data['error_id']} /"
-                        f"alert_type: {log_data['alert_type']}。"
+                        f"detected_anomaly_type: {log_data['detected_anomaly_type']}。"
                         f"和equipment_id: {log_data['equipment_id']}。"
                     )
                     return None
 
         except pyodbc.Error as ex:
             error_id_val = log_data.get('error_id', 'N/A')   # 取得 error_id 或預設N/A'
-            alert_type_val = log_data.get('alert_type', 'N/A')  # 取得 alert_type 或預設N/A'
+            detected_anomaly_type_val = log_data.get('detected_anomaly_type', 'N/A')  # 取得 detected_anomaly_type 或預設N/A'
             equipment_id_val = log_data.get('equipment_id', 'N/A')  # 取得 equipment_id 或預設N/A'
-            logger.error(f"更新警報 (error_id: {error_id_val}), alert_type: {alert_type_val}) 時發生資料庫錯誤: {ex}")
+            logger.error(
+                f"更新警報 (error_id: {error_id_val}), "
+                f"detected_anomaly_type: {detected_anomaly_type_val}) "
+                f"時發生資料庫錯誤: {ex}"
+            )
             if conn:
                 conn.rollback()
                 logger.warning("交易已回滾。")

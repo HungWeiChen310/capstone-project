@@ -13,3 +13,12 @@ cryptography>=41.0.0
 pyodbc>=5.2.0 
 pytest>=7.0.0
 pandas>=2.3.0
+openpyxl>=3.1.5
+cloudflare
+vanna
+chromadb
+ollama
+onnxruntime
+sentence-transformers
+numpy
+torch

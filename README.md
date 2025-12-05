@@ -1,9 +1,10 @@
-# LINE Bot + OpenAI 整合系統
+# LINE Bot + Ollama (Llama 3) 整合系統
 
 ## 主要功能
 
-- **LINE Bot 智能對話**：接收使用者訊息，利用 ChatGPT 生成專業、具實踐性的回應
-- **半導體設備監控**：即時監控黏晶機、打線機、切割機等設備的運作狀態，自動偵測異常並發送警報
+- **LINE Bot 智能對話**：接收使用者訊息，利用 Ollama (Llama 3 / gpt-oss:20b) 生成專業、具實踐性的回應
+- **文件檢索增強 (RAG)**：整合本地專案文件與程式碼，透過 ChromaDB 與 SentenceTransformers 進行檢索增強生成，提供更準確的答案
+- **警報接收與通知系統**：即時接收設備發送的異常警報 (透過 REST API)，自動通知相關訂閱人員
 - **多語言支援**：支援繁體中文、簡體中文、英文、日文與韓文等多種語言
 - **事件系統**：實作輕量級事件發布/訂閱系統，解耦模組間的依賴
 - **資料分析與儲存**：使用 SQL Server 資料庫儲存對話歷史、使用者偏好與設備監控資料
@@ -14,10 +15,12 @@
 - **Python 3.11**：主要開發語言
 - **Flask**：輕量級網頁框架
 - **LINE Bot SDK v3.x**：處理 LINE 訊息互動
-- **OpenAI API**：接入 ChatGPT 模型
-- **SQL Server**：關聯式資料庫管理系統
+- **Ollama**：本地運行的大型語言模型 (Llama 3 / gpt-oss:20b)
+- **SQL Server** (pyodbc)：關聯式資料庫管理系統
+- **ChromaDB**：向量資料庫，用於 RAG 知識庫儲存
+- **SentenceTransformers**：用於生成語意向量 (Embedding)
 - **Flask-Talisman**：網頁安全增強
-- **Schedule**：設備監控排程
+- **Vanna**：(選用) 文字轉 SQL 工具
 - **Docker**：容器化部署
 - **GitHub Actions**：CI/CD 自動化工作流程
 
@@ -25,18 +28,25 @@
 
 ```
 .
+├── app.py                      # Flask 應用程式進入點
 ├── src/                          # 主要源碼
 │   ├── __init__.py               # Python 包初始化
-│   ├── app.py                    # Flask 應用程式創建與配置
-│   ├── config.py                 # 集中式配置管理模組
-│   ├── main.py                   # 核心邏輯與 OpenAI 服務
+│   ├── routes/                   # 路由模組 (Blueprints)
+│   │   ├── admin.py              # 管理後台路由
+│   │   ├── alarm.py              # 設備警報 API 路由
+│   │   └── ...
+│   ├── services/                 # 業務邏輯模組
+│   ├── utils.py                  # 工具函數
+│   ├── config.py                 # 集中式配置管理
+│   ├── main.py                   # 核心邏輯與 Ollama 服務
+│   ├── rag.py                    # RAG 檢索增強生成邏輯 (ChromaDB + SentenceTransformers)
 │   ├── linebot_connect.py        # LINE Bot 事件處理
+│   ├── reply.py                  # LINE 訊息回覆與指令處理
 │   ├── database.py               # 資料庫操作
 │   ├── analytics.py              # 數據分析模組
-│   ├── equipment_monitor.py      # 設備監控與異常偵測
-│   ├── equipment_scheduler.py    # 設備監控排程器
 │   ├── event_system.py           # 事件發布/訂閱系統
 │   └── initial_data.py           # 初始資料生成
+├── rag_db/                       # ChromaDB 向量資料庫儲存目錄
 ├── templates/                    # HTML 模板
 ├── .github/workflows/            # GitHub Actions 設定
 ├── Dockerfile                    # Docker 配置
@@ -54,21 +64,48 @@
 # 一般設定
 FLASK_DEBUG=False
 PORT=5000
-HOST=127.0.0.1
+# HOST=127.0.0.1 (非必要，視部署環境而定)
 SECRET_KEY=your_secret_key
 SECRET_KEY_FILE=data/secret_key.txt
+VALIDATION_MODE=strict # strict 或 loose，決定環境變數驗證失敗時是否終止程序
 
-# OpenAI API
-OPENAI_API_KEY=your_openai_api_key
+# Ollama 設定 (本地 AI 模型)
+OLLAMA_HOST=120.105.18.33
+OLLAMA_PORT=11434
+OLLAMA_SCHEME=http # 預設 http
+OLLAMA_MODEL=gpt-oss:20b
+OLLAMA_TIMEOUT=30.0
 
 # LINE Bot API
 LINE_CHANNEL_ACCESS_TOKEN=your_line_channel_access_token
 LINE_CHANNEL_SECRET=your_line_channel_secret
 
+# 資料庫設定 (SQL Server)
+DB_SERVER=localhost
+DB_NAME=Project
+DB_USER=your_db_user
+DB_PASSWORD=your_db_password
+DB_ODBC_DRIVER=ODBC Driver 17 for SQL Server # 若安裝 msodbcsql18 可改為 "ODBC Driver 18 for SQL Server"
+
 # 管理後台
 ADMIN_USERNAME=admin_username
 ADMIN_PASSWORD=admin_password
 ```
+
+### RAG 設定
+
+系統使用 `ChromaDB` 與 `SentenceTransformers` (`paraphrase-multilingual-mpnet-base-v2`) 自動將專案中的文件與資料庫內容載入為知識庫。
+可依需求透過以下環境變數調整行為：
+
+- `ENABLE_RAG`：是否啟用檢索功能（預設為 `true`）
+- `ENABLE_RAG_DB`：是否啟用資料庫內容同步至知識庫（預設為 `true`）
+- `RAG_SOURCE_PATHS`：自訂知識庫來源路徑，使用作業系統的路徑分隔符號分隔多個路徑
+- `RAG_CHUNK_SIZE`：切分文件時的片段大小（預設 500）
+- `RAG_CHUNK_OVERLAP`：片段重疊字元數（預設 100）
+- `RAG_DB_TOP_K`：檢索時包含的資料庫記錄數量（預設 3）
+- `RAG_TOP_K`：每次檢索返回的總片段數量（預設 3）
+- `RAG_MIN_SCORE`：相似度門檻值（預設 0.4）
+- `RAG_MAX_CONTEXT_CHARS`：RAG 上下文最大字元數（預設 2500）
 
 ### 安裝相依套件
 
@@ -81,8 +118,9 @@ pip install -r requirements.txt
 ### 本地開發
 
 ```bash
-python -m src.app
+python app.py
 ```
+> 註：直接執行 `app.py` 預設監聽 PORT 443 (若權限允許) 或可透過環境變數指定。
 
 ### Docker 部署
 
@@ -114,12 +152,12 @@ Docker 映像檔採用官方 Python 3.11-slim 為基礎，並實作以下安全�
 2. 查看系統統計資料、近期對話與設備狀態
 3. 可檢視個別使用者的完整對話歷史
 
-### 設備監控功能
+### 警報與通知功能
 
-- 監控三種半導體設備：黏晶機、打線機與切割機
-- 針對溫度、壓力、良率等指標進行異常偵測
-- 依嚴重程度自動發送 LINE 通知
-- 提供設備詳情查詢功能
+- 系統提供 REST API 接收外部設備的警報資料 (POST `/alarms`)
+- 支援接收設備解決訊息 (POST `/resolvealarms`)
+- 當接收到異常警報時，依據嚴重程度自動發送 LINE 通知給訂閱該設備的使用者
+- 支援設備詳情查詢功能，可即時查看設備最新指標與未解決警報
 
 ### 事件系統
 
@@ -150,13 +188,13 @@ Docker 映像檔採用官方 Python 3.11-slim 為基礎，並實作以下安全�
 ## 問題排解
 
 - **LINE 簽名驗證失敗**：檢查 LINE_CHANNEL_SECRET 設定
-- **OpenAI API 回應異常**：確認 API 金鑰與使用額度
-- **設備監控問題**：確認資料庫初始化與排程器狀態
+- **Ollama 連線異常**：確認 OLLAMA_HOST 與 OLLAMA_PORT 設定，並確保 Ollama 服務已啟動且模型 (gpt-oss:20b) 已下載
+- **設備監控問題**：確認資料庫連線正常，並確認外部設備是否正確發送 POST 請求至 `/alarms`
 
 ## 相關資源
 
 - [LINE 開發者平台](https://developers.line.biz/zh-hant/)
-- [OpenAI API 文件](https://platform.openai.com/docs/)
+- [Ollama 官方網站](https://ollama.com/)
 - [Flask 文件](https://flask.palletsprojects.com/)
 
 更多詳細資訊，請參閱專案中的 [Documentary.md](Documentary.md)

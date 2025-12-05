@@ -1,16 +1,18 @@
-# src/app.py (新增檔案)
+# app.py
 import logging
 import os
 import sys
 from flask import Flask
 from flask_talisman import Talisman
 from werkzeug.middleware.proxy_fix import ProxyFix
-# 導入自訂模組
-from config import Config
-# 停用
-# from equipment_scheduler import start_scheduler
-from initial_data import import_data_from_excel
-# 設定日誌
+
+from src.config import Config
+from src.initial_data import import_data_from_excel
+from src.utils import get_or_create_secret_key
+from src.routes import register_blueprints
+from src.linebot_connect import get_handler
+from src.routes.main import set_handler
+
 logger = logging.getLogger(__name__)
 
 
@@ -21,27 +23,27 @@ def create_app(testing=False):
         try:
             Config.validate()
             logger.info("環境變數驗證成功")
+            
         except ValueError as e:
-            if not testing:  # 測試模式下允許使用假數據
+            if not testing:
                 logger.critical("環境變數驗證失敗，程序將終止: %s", e)
                 sys.exit(1)
             else:
                 logger.warning(f"測試模式: 環境變數驗證失敗，但將繼續執行: {e}")
+
         # 初始化 Flask 應用
         app = Flask(
             __name__,
-            template_folder=os.path.join(
-                os.path.dirname(os.path.dirname(__file__)), "templates"
-            ),
-            static_folder=os.path.join(
-                os.path.dirname(os.path.dirname(__file__)), "static"
-            ),
+            template_folder="templates",
+            static_folder="static"
         )
+
         # 設定密鑰
-        from linebot_connect import get_or_create_secret_key
         app.secret_key = get_or_create_secret_key()
+
         # 處理代理頭信息
         app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1)
+
         # 安全性設置
         if not testing:
             csp = {
@@ -75,37 +77,46 @@ def create_app(testing=False):
                 session_cookie_http_only=True,
                 feature_policy="geolocation 'none'; microphone 'none'; camera 'none'",
             )
+
         # 初始化數據
         import_data_from_excel()
-        # 初始化設備監控
-#        start_scheduler()
-        # 注冊關閉處理函數
 
-#        @app.teardown_appcontext
-#        def shutdown_app(exception=None):
-#            from equipment_scheduler import stop_scheduler
-#            stop_scheduler()
-        # 注冊路由和處理函數
-        from linebot_connect import register_routes
-        register_routes(app)
+        # 註冊路由
+        register_blueprints(app)
+
+        # 設定 webhook handler
+        handler = get_handler()
+        set_handler(handler)
+
         return app
     except Exception as e:
         logger.critical(f"應用程序初始化失敗: {e}")
         raise
-# 提供一個便利函數來運行應用
 
 
 def run_app(host=None, port=None, debug=None, ssl_context=None):
     """運行 Flask 應用程序"""
-    host = host or os.environ.get("HOST", "127.0.0.1")
+    host = host or os.environ.get("HOST", "0.0.0.0")
     port = port or int(os.environ.get("PORT", 443))
     debug = debug or (os.environ.get("FLASK_DEBUG", "False").lower() == "true")
-    ssl_context = ssl_context or (
-            os.environ.get('SSL_CERT_PATH', 'certs/capstone-project.me-chain.pem'),
-            os.environ.get('SSL_KEY_PATH', 'certs/capstone-project.me-key.pem')
+    try:
+        ssl_context = (
+            os.environ.get('SSL_CERT_PATH', 'chain.pem'),
+            os.environ.get('SSL_KEY_PATH', 'key.pem')
         )
-    app = create_app()
-    app.run(host=host, port=port, debug=debug, ssl_context=ssl_context)
+    except:
+        pass
+# 根據是否在反向代理後運行來決定是否使用 SSL
+    logger.info("啟動應用程序，反向代理模式: %s", os.environ.get('Reverse_Proxy', 'true'))
+    logger.info("主機: %s, 端口: %d, 調試模式: %s", host, port, debug)
+    logger.info("SSL 證書: %s, SSL 密鑰: %s", ssl_context[0] if ssl_context else None, ssl_context[1] if ssl_context else None)
+    if os.environ.get('Reverse_Proxy')=='true':
+        logger.info("在反向代理後運行，禁用 SSL")
+        app = create_app()
+        app.run(host=host, port=port, debug=debug)
+    else:
+        app = create_app()
+        app.run(host=host, port=port, debug=debug, ssl_context=ssl_context)
 
 
 if __name__ == "__main__":
