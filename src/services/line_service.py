@@ -8,6 +8,7 @@ from linebot.v3.messaging import (
     PushMessageRequest,
     ReplyMessageRequest,
     TextMessage,
+    MulticastRequest,
 )
 from linebot.v3.messaging.exceptions import ApiException
 from ..database import db
@@ -36,6 +37,30 @@ def send_notification(user_id_to_notify, message_text):
         return True
     except Exception as e:
         logger.error(f"發送通知給 user_id {user_id_to_notify} 失敗: {e}")
+        return False
+
+
+def send_multicast_notification(user_ids_to_notify, message_text):
+    """
+    發送 LINE 訊息給多個使用者 (Multicast)。
+    這比多次調用 send_notification 更有效率，因為它只發送一次 HTTP 請求。
+    """
+    if not user_ids_to_notify:
+        return True
+
+    try:
+        # LINE Multicast 最多支援 500 個使用者 ID
+        # 如果需要發送超過 500 人，應在此處進行分批處理
+
+        message_obj = TextMessage(text=message_text)
+        multicast_request = MulticastRequest(to=user_ids_to_notify, messages=[message_obj])
+        line_bot_api.multicast(multicast_request)
+        logger.info(f"Multicast 通知已成功發送給 {len(user_ids_to_notify)} 位使用者")
+        return True
+    except Exception as e:
+        logger.error(f"發送 Multicast 通知失敗: {e}")
+        # 如果 Multicast 失敗，可以考慮退回到逐一發送 (但這會很慢)，
+        # 或者只記錄錯誤。這裡選擇記錄錯誤。
         return False
 
 
