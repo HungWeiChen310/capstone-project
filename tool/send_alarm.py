@@ -4,22 +4,22 @@ import requests
 
 def severity_for_rpm_low(rpm: float) -> str:
     if rpm < 18000:
-        return "emergency"
+        return "重度異常"
     if rpm < 24000:
-        return "critical"
+        return "中度異常"
     if rpm < 27000:
-        return "warning"
-    return "warning"
+        return "輕度異常"
+    return "輕度異常"
 
 
 def severity_for_deformation(deformation_mm: float) -> str:
     if deformation_mm > 0.1:
-        return "emergency"
+        return "重度異常"
     if deformation_mm > 0.05:
-        return "critical"
+        return "中度異常"
     if deformation_mm >= 0.01:
-        return "warning"
-    return "warning"
+        return "輕度異常"
+    return "輕度異常"
 
 
 def send_json() -> None:
