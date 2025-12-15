@@ -227,6 +227,38 @@ class RAGKnowledgeBase:
                 "text_columns": ["equipment_id", "year", "month", "detected_anomaly_type", "downtime_sec", "downtime_rate_percent"],
                 "meta_columns": ["equipment_id", "year", "month", "detected_anomaly_type"],
             },
+            {
+                "query": "SELECT * FROM stats_operational_quarterly",
+                "table": "stats_operational_quarterly",
+                "source_tag": "StatsOpQuarterly",
+                "id_columns": ["equipment_id", "year", "quarter"],
+                "text_columns": ["equipment_id", "year", "quarter", "total_operation_hrs", "downtime_rate_percent"],
+                "meta_columns": ["equipment_id", "year", "quarter"],
+            },
+            {
+                "query": "SELECT * FROM stats_operational_yearly",
+                "table": "stats_operational_yearly",
+                "source_tag": "StatsOpYearly",
+                "id_columns": ["equipment_id", "year"],
+                "text_columns": ["equipment_id", "year", "total_operation_hrs", "downtime_rate_percent"],
+                "meta_columns": ["equipment_id", "year"],
+            },
+            {
+                "query": "SELECT * FROM stats_abnormal_quarterly",
+                "table": "stats_abnormal_quarterly",
+                "source_tag": "StatsAbnormalQuarterly",
+                "id_columns": ["equipment_id", "year", "quarter", "detected_anomaly_type"],
+                "text_columns": ["equipment_id", "year", "quarter", "detected_anomaly_type", "downtime_sec", "downtime_rate_percent"],
+                "meta_columns": ["equipment_id", "year", "quarter", "detected_anomaly_type"],
+            },
+            {
+                "query": "SELECT * FROM stats_abnormal_yearly",
+                "table": "stats_abnormal_yearly",
+                "source_tag": "StatsAbnormalYearly",
+                "id_columns": ["equipment_id", "year", "detected_anomaly_type"],
+                "text_columns": ["equipment_id", "year", "detected_anomaly_type", "downtime_sec", "downtime_rate_percent"],
+                "meta_columns": ["equipment_id", "year", "detected_anomaly_type"],
+            },
         ]
 
         state = self._load_state()
