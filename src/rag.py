@@ -212,11 +212,11 @@ class RAGKnowledgeBase:
                 "meta_columns": ["equipment_id", "severity_level"],
             },
             {
-                "query": "SELECT * FROM stats_operational_monthly",
+                "query": "SELECT *, 'Total Operational and Abnormal Status Summary' as description FROM stats_operational_monthly",
                 "table": "stats_operational_monthly",
                 "source_tag": "StatsOpMonthly",
                 "id_columns": ["equipment_id", "year", "month"],
-                "text_columns": ["equipment_id", "year", "month", "total_operation_hrs", "downtime_rate_percent"],
+                "text_columns": ["description", "equipment_id", "year", "month", "total_operation_hrs", "downtime_sec", "downtime_rate_percent"],
                 "meta_columns": ["equipment_id", "year", "month"],
             },
             {
@@ -228,19 +228,19 @@ class RAGKnowledgeBase:
                 "meta_columns": ["equipment_id", "year", "month", "detected_anomaly_type"],
             },
             {
-                "query": "SELECT * FROM stats_operational_quarterly",
+                "query": "SELECT *, 'Total Operational and Abnormal Status Summary' as description FROM stats_operational_quarterly",
                 "table": "stats_operational_quarterly",
                 "source_tag": "StatsOpQuarterly",
                 "id_columns": ["equipment_id", "year", "quarter"],
-                "text_columns": ["equipment_id", "year", "quarter", "total_operation_hrs", "downtime_rate_percent"],
+                "text_columns": ["description", "equipment_id", "year", "quarter", "total_operation_hrs", "downtime_sec", "downtime_rate_percent"],
                 "meta_columns": ["equipment_id", "year", "quarter"],
             },
             {
-                "query": "SELECT * FROM stats_operational_yearly",
+                "query": "SELECT *, 'Total Operational and Abnormal Status Summary' as description FROM stats_operational_yearly",
                 "table": "stats_operational_yearly",
                 "source_tag": "StatsOpYearly",
                 "id_columns": ["equipment_id", "year"],
-                "text_columns": ["equipment_id", "year", "total_operation_hrs", "downtime_rate_percent"],
+                "text_columns": ["description", "equipment_id", "year", "total_operation_hrs", "downtime_sec", "downtime_rate_percent"],
                 "meta_columns": ["equipment_id", "year"],
             },
             {
