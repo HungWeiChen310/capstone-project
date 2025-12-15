@@ -174,6 +174,9 @@ class OllamaService:
         self.user_prefs = db.get_user_preference(user_id)
         self.language = self.user_prefs.get("language", "zh-Hant")
 
+        # Get user subscriptions
+        self.subscribed_machines = db.get_user_subscriptions(user_id)
+
         # RAG settings
         self.rag_enabled = os.getenv("ENABLE_RAG", "true").lower() not in {"false", "0", "no"}
         self.rag_top_k = self._parse_int(os.getenv("RAG_TOP_K"), default=3)
@@ -209,14 +212,40 @@ class OllamaService:
 
         user_data.add_message(self.user_id, "user", self.message)
 
+        # Build access control instruction
+        access_instruction = ""
+        if self.subscribed_machines:
+            machine_list = ", ".join(self.subscribed_machines)
+            access_instruction = (
+                f"\n[IMPORTANT ACCESS CONTROL]\n"
+                f"The user is subscribed ONLY to the following machines: {machine_list}.\n"
+                f"You MUST NOT provide any information about machines not in this list.\n"
+                f"If the user asks about an unsubscribed machine, politely refuse to answer, "
+                f"stating they do not have subscription access to it.\n"
+            )
+        else:
+            access_instruction = (
+                f"\n[IMPORTANT ACCESS CONTROL]\n"
+                f"The user is NOT subscribed to any machines.\n"
+                f"You MUST NOT provide specific machine status or details.\n"
+                f"Politely inform the user they need to subscribe to a machine to view its details.\n"
+            )
+
         context_message = self._build_context_message()
 
         # Prepare a clean snapshot for the API call
         conversation_snapshot = self._prepare_conversation_snapshot(conversation)
 
+        # Combine access instruction and RAG context
+        full_system_inject = ""
+        if access_instruction:
+            full_system_inject += access_instruction + "\n"
         if context_message:
+            full_system_inject += context_message
+
+        if full_system_inject:
             # Inject context after the system prompt
-            conversation_snapshot.insert(1, {"role": "system", "content": context_message})
+            conversation_snapshot.insert(1, {"role": "system", "content": full_system_inject})
 
         try:
             # Retry logic remains the same
