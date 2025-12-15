@@ -2,7 +2,7 @@
 from flask import request, jsonify
 from . import alarm_bp
 from ..database import db
-from ..services.line_service import send_notification
+from ..services.line_service import send_multicast_notification
 import logging
 import datetime
 
@@ -26,8 +26,8 @@ def alarms():
                 f"設備 {equipment_id} 在 {data['created_time']} 時發生 {data['detected_anomaly_type']} 警報，"
                 f"嚴重程度 {data['severity_level']}。"
             )
-            for user in subscribers:
-                send_notification(user, message_text)
+            # 使用 Multicast 一次發送給所有訂閱者
+            send_multicast_notification(subscribers, message_text)
         else:
             logger.info(f"No subscribers found for equipment {equipment_id}")
 
@@ -88,8 +88,8 @@ def resolve_alarms():
                     f"在 {resolved_time_from_db.strftime('%Y-%m-%d %H:%M:%S')} 由 {data['resolved_by']} 解決。"
                     f"解決說明: {data.get('resolution_notes') or '無'}"
                 )
-                for user in subscribers:
-                    send_notification(user, message_text)
+                # 使用 Multicast 一次發送給所有訂閱者
+                send_multicast_notification(subscribers, message_text)
             else:
                 logger.info(f"No subscribers found for equipment {equipment_id}")
 
