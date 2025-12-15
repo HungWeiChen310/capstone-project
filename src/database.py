@@ -1,8 +1,12 @@
+import contextlib
+import datetime
 import logging
 import os
 import sys
+import threading
+from queue import Empty, Full, Queue
+
 import pyodbc
-import datetime
 
 if __package__ is None or __package__ == "":
     import pathlib
@@ -10,10 +14,78 @@ if __package__ is None or __package__ == "":
     sys.path.append(str(pathlib.Path(__file__).resolve().parent.parent))
     __package__ = "src"
 
-from .config import Config
+from .config import Config  # noqa: E402
 
 
 logger = logging.getLogger(__name__)
+
+
+class SimpleConnectionPool:
+    """A simple thread-safe connection pool for PyODBC connections."""
+
+    def __init__(self, connect_func, max_size=10, timeout=5):
+        self.connect_func = connect_func
+        self.max_size = max_size
+        self.timeout = timeout
+        self.pool = Queue(maxsize=max_size)
+        self._created_count = 0
+        self._lock = threading.Lock()
+
+    def get_connection(self):
+        """Retrieves a connection from the pool, creating a new one if
+        necessary."""
+        try:
+            return self.pool.get(block=False)
+        except Empty:
+            with self._lock:
+                if self._created_count < self.max_size:
+                    try:
+                        conn = self.connect_func()
+                        self._created_count += 1
+                        return conn
+                    except Exception as e:
+                        logger.error(
+                            "Failed to create new DB connection: %s",
+                            e,
+                        )
+                        raise
+
+            # If pool is full, wait for a connection to be returned
+            try:
+                return self.pool.get(timeout=self.timeout)
+            except Empty:
+                logger.error("Database connection pool exhausted.")
+                raise Exception("Database connection pool exhausted")
+
+    def return_connection(self, conn):
+        """Returns a connection to the pool, rolling back any pending
+        transaction."""
+        if conn is None:
+            return
+
+        try:
+            # Ensure clean state for the next user
+            conn.rollback()
+            self.pool.put(conn, block=False)
+        except (Full, pyodbc.Error, Exception):
+            # If pool is full or connection is dead, close it
+            try:
+                conn.close()
+            except Exception:
+                pass
+            with self._lock:
+                self._created_count -= 1
+
+    def close_all(self):
+        """Closes all connections in the pool."""
+        while not self.pool.empty():
+            try:
+                conn = self.pool.get(block=False)
+                conn.close()
+            except (Empty, Exception):
+                pass
+        with self._lock:
+            self._created_count = 0
 
 
 class Database:
@@ -22,16 +94,24 @@ class Database:
     def __init__(self, server=None, database=None, user=None, password=None):
         """初始化資料庫連線"""
         resolved_server = server if server is not None else Config.DB_SERVER
-        resolved_database = database if database is not None else Config.DB_NAME
+        resolved_database = (
+            database if database is not None else Config.DB_NAME
+        )
         resolved_user = user if user is not None else Config.DB_USER
-        resolved_password = password if password is not None else Config.DB_PASSWORD
+        resolved_password = (
+            password if password is not None else Config.DB_PASSWORD
+        )
 
-        # if not resolved_user or not resolved_password:
-        #    logger.error("缺少 DB_USER 或 DB_PASSWORD，無法使用帳號密碼登入 SQL Server。")
-        #    raise ValueError("DB_USER 與 DB_PASSWORD 為必填，請確認環境變數設定。")
         logger.info("初始化資料庫連線字串...")
-        logger.info(f"使用的伺服器: {(os.getenv('Windows_login')).lower()}, 伺服器: {resolved_server}, 資料庫: {resolved_database}")
-        if bool(os.getenv("Windows_login")) is False:
+        windows_login = (os.getenv("Windows_login") or "").lower()
+        logger.info(
+            "使用的伺服器: %s, 伺服器: %s, 資料庫: %s",
+            windows_login,
+            resolved_server,
+            resolved_database,
+        )
+
+        if not bool(os.getenv("Windows_login")):
             self.connection_string = (
                 f"DRIVER={{{Config.DB_ODBC_DRIVER}}};"
                 f"SERVER={resolved_server};"
@@ -49,11 +129,39 @@ class Database:
                 f"DATABASE={resolved_database};"
                 "Trusted_Connection=yes;"
             )
+
+        # Initialize connection pool
+        self.pool = SimpleConnectionPool(
+            self._create_new_connection,
+            max_size=10,
+        )
         self._initialize_db()
 
-    def _get_connection(self):
-        """建立並回傳資料庫連線"""
+    def _create_new_connection(self):
+        """建立一個新的資料庫連線 (供 Pool 使用)"""
         return pyodbc.connect(self.connection_string)
+
+    @contextlib.contextmanager
+    def _get_connection(self):
+        """
+        取得資料庫連線的 Context Manager (使用 Connection Pool)。
+        Usage:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                ...
+        """
+        conn = self.pool.get_connection()
+        try:
+            yield conn
+            # Commit on success (imitating pyodbc context manager behavior)
+            conn.commit()
+        except Exception:
+            # Rollback on error
+            conn.rollback()
+            raise
+        finally:
+            # Always return to pool
+            self.pool.return_connection(conn)
 
     def _initialize_db(self):
         """
@@ -64,7 +172,7 @@ class Database:
             with self._get_connection() as conn:
                 init_cur = conn.cursor()
 
-            # 1. user_preferences
+                # 1. user_preferences
                 user_preferences_cols = """
                     [user_id] NVARCHAR(255) NOT NULL PRIMARY KEY,
                     [language] VARCHAR(50) NULL,
@@ -75,7 +183,11 @@ class Database:
                     [display_name] NVARCHAR(255) NULL,
                     [last_active] datetime2(2) NULL
                 """
-                self._create_table_if_not_exists(init_cur, "user_preferences", user_preferences_cols)
+                self._create_table_if_not_exists(
+                    init_cur,
+                    "user_preferences",
+                    user_preferences_cols,
+                )
 
                 # 2. equipment
                 equipment_cols = """
@@ -87,7 +199,11 @@ class Database:
                     [status] NVARCHAR(255) NOT NULL,
                     [last_updated] datetime2(2) NULL
                 """
-                self._create_table_if_not_exists(init_cur, "equipment", equipment_cols)
+                self._create_table_if_not_exists(
+                    init_cur,
+                    "equipment",
+                    equipment_cols,
+                )
 
                 # 3. conversations
                 conversations_cols = """
@@ -97,7 +213,11 @@ class Database:
                     [content] NVARCHAR(MAX) NOT NULL,
                     [timestamp] datetime2(2) NOT NULL DEFAULT GETDATE()
                 """
-                self._create_table_if_not_exists(init_cur, "conversations", conversations_cols)
+                self._create_table_if_not_exists(
+                    init_cur,
+                    "conversations",
+                    conversations_cols,
+                )
 
                 # 4. user_equipment_subscriptions
                 user_equipment_subscriptions_cols = """
@@ -105,21 +225,27 @@ class Database:
                     [user_id] NVARCHAR(255) NOT NULL,
                     [notification_level] NVARCHAR(50) NULL,
                     [subscribed_at] datetime2(2) NULL DEFAULT GETDATE(),
-                    [equipment_id] NVARCHAR(255) NOT NULL FOREIGN KEY REFERENCES equipment(equipment_id),
-                    CONSTRAINT FK_subscriptions_user FOREIGN KEY (user_id) REFERENCES user_preferences(user_id),
-                    CONSTRAINT FK_subscriptions_equipment FOREIGN KEY (equipment_id) REFERENCES equipment(equipment_id),
+                    [equipment_id] NVARCHAR(255) NOT NULL
+                        FOREIGN KEY REFERENCES equipment(equipment_id),
+                    CONSTRAINT FK_subscriptions_user
+                        FOREIGN KEY (user_id)
+                        REFERENCES user_preferences(user_id),
+                    CONSTRAINT FK_subscriptions_equipment
+                        FOREIGN KEY (equipment_id)
+                        REFERENCES equipment(equipment_id),
                     CONSTRAINT UQ_user_equipment UNIQUE(user_id, equipment_id)
                 """
                 self._create_table_if_not_exists(
                     init_cur,
                     "user_equipment_subscriptions",
-                    user_equipment_subscriptions_cols
+                    user_equipment_subscriptions_cols,
                 )
 
                 # 5. alert_history
                 alert_history_cols = """
                     [error_id] INT NOT NULL PRIMARY KEY,
-                    [equipment_id] NVARCHAR(255) NOT NULL FOREIGN KEY REFERENCES equipment(equipment_id),
+                    [equipment_id] NVARCHAR(255) NOT NULL
+                        FOREIGN KEY REFERENCES equipment(equipment_id),
                     [detected_anomaly_type] NVARCHAR(255) NULL,
                     [severity_level] NVARCHAR(255) NULL,
                     [is_resolved] BIT NULL DEFAULT 0,
@@ -129,12 +255,17 @@ class Database:
                     [resolution_notes] NVARCHAR(MAX) NULL
                 """
                 # 此表欄位原有message欄位，因純粹為重複其他欄位內容，不須保留，所以移除
-                self._create_table_if_not_exists(init_cur, "alert_history", alert_history_cols)
+                self._create_table_if_not_exists(
+                    init_cur,
+                    "alert_history",
+                    alert_history_cols,
+                )
 
                 # 6. equipment_metrics
                 equipment_metrics_cols = """
                     [id] INT NOT NULL PRIMARY KEY,
-                    [equipment_id] NVARCHAR(255) NOT NULL FOREIGN KEY REFERENCES equipment(equipment_id),
+                    [equipment_id] NVARCHAR(255) NOT NULL
+                        FOREIGN KEY REFERENCES equipment(equipment_id),
                     [metric_type] NVARCHAR(255) NOT NULL,
                     [status] NVARCHAR(50) NULL,
                     [value] FLOAT NULL,
@@ -143,7 +274,11 @@ class Database:
                     [unit] NVARCHAR(50) NULL,
                     [last_updated] datetime2(2) NULL DEFAULT GETDATE()
                 """
-                self._create_table_if_not_exists(init_cur, "equipment_metrics", equipment_metrics_cols)
+                self._create_table_if_not_exists(
+                    init_cur,
+                    "equipment_metrics",
+                    equipment_metrics_cols,
+                )
 
                 # 7. equipment_metric_thresholds
                 equipment_metric_thresholds_cols = """
@@ -161,14 +296,15 @@ class Database:
                 self._create_table_if_not_exists(
                     init_cur,
                     "equipment_metric_thresholds",
-                    equipment_metric_thresholds_cols
+                    equipment_metric_thresholds_cols,
                 )
 
                 # 8. error_logs
                 error_logs_cols = """
                     [log_date] DATE NOT NULL,
                     [error_id] INT NOT NULL PRIMARY KEY,
-                    [equipment_id] NVARCHAR(255) NOT NULL FOREIGN KEY REFERENCES equipment(equipment_id),
+                    [equipment_id] NVARCHAR(255) NOT NULL
+                        FOREIGN KEY REFERENCES equipment(equipment_id),
                     [deformation_mm] FLOAT NOT NULL,
                     [rpm] INT NOT NULL,
                     [event_time] datetime2(2) NOT NULL,
@@ -177,12 +313,14 @@ class Database:
                     [resolved_time] datetime2(2) NULL,
                     [severity_level] NVARCHAR(MAX) NULL
                 """
-
-                self._create_table_if_not_exists(init_cur, "error_logs", error_logs_cols)
+                self._create_table_if_not_exists(
+                    init_cur, "error_logs", error_logs_cols
+                )
 
                 # 9. stats_abnormal_monthly
                 stats_abnormal_monthly_cols = """
-                    [equipment_id] NVARCHAR(255) NOT NULL FOREIGN KEY REFERENCES equipment(equipment_id),
+                    [equipment_id] NVARCHAR(255) NOT NULL
+                        FOREIGN KEY REFERENCES equipment(equipment_id),
                     [year] INT NOT NULL,
                     [month] INT NOT NULL,
                     [detected_anomaly_type] NVARCHAR(255) NOT NULL,
@@ -190,13 +328,20 @@ class Database:
                     [downtime_sec] INT NULL,
                     [downtime_rate_percent] NVARCHAR(255) NULL,
                     [notes] NVARCHAR(MAX) NULL,
-                    PRIMARY KEY (equipment_id, year, month, detected_anomaly_type)
+                    PRIMARY KEY (
+                        equipment_id, year, month, detected_anomaly_type
+                    )
                 """
-                self._create_table_if_not_exists(init_cur, "stats_abnormal_monthly", stats_abnormal_monthly_cols)
+                self._create_table_if_not_exists(
+                    init_cur,
+                    "stats_abnormal_monthly",
+                    stats_abnormal_monthly_cols,
+                )
 
                 # 10. stats_abnormal_quarterly
                 stats_abnormal_quarterly_cols = """
-                    [equipment_id] NVARCHAR(255) NOT NULL FOREIGN KEY REFERENCES equipment(equipment_id),
+                    [equipment_id] NVARCHAR(255) NOT NULL
+                        FOREIGN KEY REFERENCES equipment(equipment_id),
                     [year] INT NOT NULL,
                     [quarter] INT NOT NULL,
                     [detected_anomaly_type] NVARCHAR(255) NOT NULL,
@@ -204,13 +349,20 @@ class Database:
                     [downtime_sec] INT NULL,
                     [downtime_rate_percent] NVARCHAR(255) NULL,
                     [notes] NVARCHAR(MAX) NULL,
-                    PRIMARY KEY (equipment_id, year, quarter, detected_anomaly_type)
+                    PRIMARY KEY (
+                        equipment_id, year, quarter, detected_anomaly_type
+                    )
                 """
-                self._create_table_if_not_exists(init_cur, "stats_abnormal_quarterly", stats_abnormal_quarterly_cols)
+                self._create_table_if_not_exists(
+                    init_cur,
+                    "stats_abnormal_quarterly",
+                    stats_abnormal_quarterly_cols,
+                )
 
                 # 11. stats_abnormal_yearly
                 stats_abnormal_yearly_cols = """
-                    [equipment_id] NVARCHAR(255) NOT NULL FOREIGN KEY REFERENCES equipment(equipment_id),
+                    [equipment_id] NVARCHAR(255) NOT NULL
+                        FOREIGN KEY REFERENCES equipment(equipment_id),
                     [year] INT NOT NULL,
                     [detected_anomaly_type] NVARCHAR(255) NOT NULL,
                     [total_operation_hrs] INT NULL,
@@ -219,11 +371,16 @@ class Database:
                     [notes] NVARCHAR(MAX) NULL,
                     PRIMARY KEY (equipment_id, year, detected_anomaly_type)
                 """
-                self._create_table_if_not_exists(init_cur, "stats_abnormal_yearly", stats_abnormal_yearly_cols)
+                self._create_table_if_not_exists(
+                    init_cur,
+                    "stats_abnormal_yearly",
+                    stats_abnormal_yearly_cols,
+                )
 
                 # 12. stats_operational_monthly
                 stats_operational_monthly_cols = """
-                    [equipment_id] NVARCHAR(255) NOT NULL FOREIGN KEY REFERENCES equipment(equipment_id),
+                    [equipment_id] NVARCHAR(255) NOT NULL
+                        FOREIGN KEY REFERENCES equipment(equipment_id),
                     [year] INT NOT NULL,
                     [month] INT NOT NULL,
                     [total_operation_hrs] INT NULL,
@@ -232,11 +389,16 @@ class Database:
                     [notes] NVARCHAR(MAX) NULL,
                     PRIMARY KEY (equipment_id, year, month)
                 """
-                self._create_table_if_not_exists(init_cur, "stats_operational_monthly", stats_operational_monthly_cols)
+                self._create_table_if_not_exists(
+                    init_cur,
+                    "stats_operational_monthly",
+                    stats_operational_monthly_cols,
+                )
 
                 # 13. stats_operational_quarterly
                 stats_operational_quarterly_cols = """
-                    [equipment_id] NVARCHAR(255) NOT NULL FOREIGN KEY REFERENCES equipment(equipment_id),
+                    [equipment_id] NVARCHAR(255) NOT NULL
+                        FOREIGN KEY REFERENCES equipment(equipment_id),
                     [year] INT NOT NULL,
                     [quarter] INT NOT NULL,
                     [total_operation_hrs] INT NULL,
@@ -248,7 +410,7 @@ class Database:
                 self._create_table_if_not_exists(
                     init_cur,
                     "stats_operational_quarterly",
-                    stats_operational_quarterly_cols
+                    stats_operational_quarterly_cols,
                 )
 
                 # 14. stats_operational_yearly
@@ -260,14 +422,19 @@ class Database:
                     [downtime_rate_percent] NVARCHAR(255) NULL,
                     [notes] NVARCHAR(MAX) NULL,
                     PRIMARY KEY (equipment_id, year),
-                    CONSTRAINT FK_stats_op_yearly_equip FOREIGN KEY (equipment_id) REFERENCES equipment(equipment_id)
+                    CONSTRAINT FK_stats_op_yearly_equip
+                        FOREIGN KEY (equipment_id)
+                        REFERENCES equipment(equipment_id)
                 """
-                self._create_table_if_not_exists(init_cur, "stats_operational_yearly", stats_operational_yearly_cols)
-
-                conn.commit()
-                logger.info(
-                    "資料庫表格初始化/檢查完成 (已建立主鍵與外鍵約束)。"
+                self._create_table_if_not_exists(
+                    init_cur,
+                    "stats_operational_yearly",
+                    stats_operational_yearly_cols,
                 )
+
+                # conn.commit() # Handled by _get_connection context manager
+                logger.info("資料庫表格初始化/檢查完成 (已建立主鍵與外鍵約束)。")
+
             self._ensure_system_user()
         except pyodbc.Error as e:
             logger.exception(f"資料庫初始化期間發生 pyodbc 錯誤: {e}")
@@ -276,7 +443,12 @@ class Database:
             logger.exception(f"資料庫初始化期間發生非預期錯誤: {ex}")
             raise
 
-    def _create_table_if_not_exists(self, cursor, table_name, columns_definition):
+    def _create_table_if_not_exists(
+        self,
+        cursor,
+        table_name,
+        columns_definition,
+    ):
         """通用方法，用於檢查並建立資料表"""
         check_table_sql = (
             "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES "
@@ -284,7 +456,9 @@ class Database:
         )
         cursor.execute(check_table_sql, (table_name,))
         if cursor.fetchone()[0] == 0:
-            create_table_sql = f"CREATE TABLE {table_name} ({columns_definition});"
+            create_table_sql = (
+                f"CREATE TABLE {table_name} ({columns_definition});"
+            )
             cursor.execute(create_table_sql)
             logger.info(f"資料表 '{table_name}' 已建立。")
         else:
@@ -303,13 +477,14 @@ class Database:
                     cursor.execute(
                         """
                         INSERT INTO user_preferences
-                            (user_id, language, role, is_admin, responsible_area,
+                            (user_id, language, role, is_admin,
+                             responsible_area,
                              created_at, display_name, last_active)
                         VALUES (?, ?, ?, 0, NULL, GETDATE(), ?, GETDATE());
                         """,
                         ("bot", "zh-Hant", "assistant", "System Bot"),
                     )
-                    conn.commit()
+                    # conn.commit() # Handled by _get_connection
         except pyodbc.Error as e:
             logger.exception(f"確保系統 bot 使用者存在時發生錯誤: {e}")
 
@@ -324,9 +499,9 @@ class Database:
                         (sender_id, receiver_id, sender_role, content)
                     VALUES (?, ?, ?, ?);
                     """,
-                    (sender_id, receiver_id, sender_role, content)
+                    (sender_id, receiver_id, sender_role, content),
                 )
-            conn.commit()
+                # conn.commit() # Handled by _get_connection
             return True
         except pyodbc.Error as e:
             logger.exception(f"新增對話記錄失敗: {e}")
@@ -347,7 +522,7 @@ class Database:
                     WHERE sender_id = ?
                     ORDER BY timestamp DESC;
                     """,
-                    (limit, sender_id)
+                    (limit, sender_id),
                 )
                 # 從資料庫讀取是 DESC，但通常聊天室顯示是 ASC (舊的在上面)
                 # 所以先 reverse
@@ -393,9 +568,10 @@ class Database:
                     "assistant_messages": role_counts.get("assistant", 0),
                     "system_messages": role_counts.get("system", 0),
                     "other_messages": sum(
-                        count for role, count in role_counts.items()
-                        if role not in ["user", "assistant", "system"]
-                    )
+                        count
+                        for role, count in role_counts.items()
+                        if role not in ("user", "assistant", "system")
+                    ),
                 }
         except pyodbc.Error as e:
             logger.exception(f"取得對話統計資料失敗: {e}")
@@ -419,37 +595,53 @@ class Database:
                     SELECT DISTINCT TOP (?)
                         c.sender_id,   -- 這其實是 user_id
                         p.language,
-                        MAX(c.timestamp) as last_activity_ts   -- 改名以區分 last_message 內容
+                        MAX(c.timestamp) as last_activity_ts
+                        -- 改名以區分 last_message 內容
                     FROM conversations c
-                    LEFT JOIN user_preferences p ON c.sender_id = p.user_id   -- 連接基於 sender_id = user_id
+                    LEFT JOIN user_preferences p ON c.sender_id = p.user_id
+                    -- 連接基於 sender_id = user_id
                     GROUP BY c.sender_id, p.language
                     ORDER BY last_activity_ts DESC;
                 """
                 recent_conv_cur.execute(sql_query, (limit,))
                 results = []
-                for user_id_val, language, timestamp_val in recent_conv_cur.fetchall():
+                for user_id_val, language, timestamp_val in (
+                    recent_conv_cur.fetchall()
+                ):
                     # sender_id 即 user_id
                     recent_conv_cur.execute(
-                        "SELECT COUNT(*) FROM conversations WHERE sender_id = ?;",
-                        (user_id_val,)
+                        (
+                            "SELECT COUNT(*) FROM conversations "
+                            "WHERE sender_id = ?;"
+                        ),
+                        (user_id_val,),
                     )
                     message_count = recent_conv_cur.fetchone()[0]
                     recent_conv_cur.execute(
                         """
                         SELECT TOP 1 content FROM conversations
-                        WHERE sender_id = ? AND sender_role = 'user'   -- 通常看 user 的最後一句話
+                        WHERE sender_id = ? AND sender_role = 'user'
+                        -- 通常看 user 的最後一句話
                         ORDER BY timestamp DESC;
                         """,
-                        (user_id_val,)
+                        (user_id_val,),
                     )
                     last_message_content = recent_conv_cur.fetchone()
-                    results.append({
-                        "user_id": user_id_val,  # 改名為 user_id
-                        "language": language or "zh-Hant",  # 預設語言
-                        "last_activity": timestamp_val,  # 直接使用 timestamp
-                        "message_count": message_count,
-                        "last_message": last_message_content[0] if last_message_content else "",
-                    })
+                    results.append(
+                        {
+                            "user_id": user_id_val,  # 改名為 user_id
+                            "language": language or "zh-Hant",  # 預設語言
+                            "last_activity": timestamp_val,  # 直接使用 timestamp
+                            "message_count": message_count,
+                            "last_message": (
+                                (
+                                    last_message_content[0]
+                                    if last_message_content
+                                    else ""
+                                )
+                            ),
+                        }
+                    )
                 return results
         except pyodbc.Error as e:
             logger.exception(f"取得最近對話失敗: {e}")
@@ -462,7 +654,7 @@ class Database:
                 user_pref_set_cur = conn.cursor()
                 user_pref_set_cur.execute(
                     "SELECT user_id FROM user_preferences WHERE user_id = ?;",
-                    (user_id,)
+                    (user_id,),
                 )
                 user_exists = user_pref_set_cur.fetchone()
 
@@ -480,13 +672,17 @@ class Database:
                     # 如果沒有要更新的欄位，至少更新 last_active
                     if not update_parts:
                         user_pref_set_cur.execute(
-                            "UPDATE user_preferences SET last_active = GETDATE()"
-                            " WHERE user_id = ?;",
-                            (user_id,)
+                            (
+                                "UPDATE user_preferences "
+                                "SET last_active = GETDATE() "
+                                "WHERE user_id = ?;"
+                            ),
+                            (user_id,),
                         )
                     else:
                         sql = (
-                            "UPDATE user_preferences SET last_active = GETDATE(), "
+                            "UPDATE user_preferences "
+                            "SET last_active = GETDATE(), "
                             + ", ".join(update_parts)
                             + " WHERE user_id = ?;"
                         )
@@ -501,9 +697,9 @@ class Database:
                              is_admin, responsible_area)
                         VALUES (?, ?, ?, GETDATE(), 0, NULL);
                         """,
-                        (user_id, language or "zh-Hant", role or "user")
+                        (user_id, language or "zh-Hant", role or "user"),
                     )
-                conn.commit()
+                # conn.commit() # Handled by _get_connection
                 return True
         except pyodbc.Error as e:
             logger.exception(f"設定使用者偏好失敗: {e}")
@@ -518,7 +714,7 @@ class Database:
                 user_pref_get_cur.execute(
                     "SELECT language, role, is_admin, responsible_area "
                     "FROM user_preferences WHERE user_id = ?;",
-                    (user_id,)
+                    (user_id,),
                 )
                 result = user_pref_get_cur.fetchone()
                 if result:
@@ -526,19 +722,20 @@ class Database:
                         "language": result[0],
                         "role": result[1],
                         "is_admin": result[2],
-                        "responsible_area": result[3]
+                        "responsible_area": result[3],
                     }
                 # 如果未找到則創建預設偏好
                 logger.info(
-                    f"User {user_id} not found in preferences, "
-                    "creating with defaults."
+                    "User %s not found in preferences, "
+                    "creating with defaults.",
+                    user_id,
                 )
                 self.set_user_preference(user_id)  # 這會創建預設的 user, zh-Hant
                 return {
                     "language": "zh-Hant",
                     "role": "user",
                     "is_admin": False,
-                    "responsible_area": None
+                    "responsible_area": None,
                 }
         except pyodbc.Error as e:
             logger.exception(f"取得使用者偏好失敗: {e}")
@@ -547,7 +744,7 @@ class Database:
                 "language": "zh-Hant",
                 "role": "user",
                 "is_admin": False,
-                "responsible_area": None
+                "responsible_area": None,
             }
 
     def insert_alert_history(self, log_data: dict):
@@ -570,52 +767,52 @@ class Database:
         # 取得目前最大的 error_id，並加 1 作為新的 error_id
         sql_get_max = "SELECT ISNULL(MAX(error_id), 0) FROM alert_history;"
 
-        conn = None
         try:
-            # 用傳進來的 db 去拿連線
-            conn = db._get_connection()
-            cursor = conn.cursor()
+            # Modified to use context manager correctly
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
 
-            # 共用 error_id 和 event_time
-            cursor.execute(sql_get_max)
-            latest_error_id = cursor.fetchone()[0] + 1
-            event_time = datetime.datetime.now()  # 原使用GETDATE()，改成datetime.now
+                # 共用 error_id 和 event_time
+                cursor.execute(sql_get_max)
+                latest_error_id = cursor.fetchone()[0] + 1
+                event_time = datetime.datetime.now()
 
-            # 寫入 alert_history
-            cursor.execute(sql_alert_history,
-                           latest_error_id,
-                           log_data["equipment_id"],
-                           log_data["detected_anomaly_type"],
-                           log_data["severity_level"],
-                           event_time
-                           )
+                # 寫入 alert_history
+                cursor.execute(
+                    sql_alert_history,
+                    latest_error_id,
+                    log_data["equipment_id"],
+                    log_data["detected_anomaly_type"],
+                    log_data["severity_level"],
+                    event_time,
+                )
 
-            # 寫入 error_logs
-            cursor.execute(sql_error_log,
-                           event_time.date(),
-                           latest_error_id,
-                           log_data["equipment_id"],
-                           log_data.get("deformation_mm", 0),
-                           log_data.get("rpm", 30000),  # 預設30000
-                           event_time,
-                           log_data["detected_anomaly_type"],
-                           log_data["severity_level"]
-                           )
+                # 寫入 error_logs
+                cursor.execute(
+                    sql_error_log,
+                    event_time.date(),
+                    latest_error_id,
+                    log_data["equipment_id"],
+                    log_data.get("deformation_mm", 0),
+                    log_data.get("rpm", 30000),  # 預設30000
+                    event_time,
+                    log_data["detected_anomaly_type"],
+                    log_data["severity_level"],
+                )
 
-            conn.commit()
-            logger.info(f"成功寫入一筆異常紀錄，equipment_id: {log_data['equipment_id']}")
-            return {"error_id": latest_error_id, "created_time": event_time}
+                # conn.commit() # Handled by _get_connection context manager
+                logger.info(
+                    "成功寫入一筆異常紀錄，equipment_id: %s",
+                    log_data["equipment_id"],
+                )
+                return {
+                    "error_id": latest_error_id,
+                    "created_time": event_time,
+                }
         except pyodbc.Error as ex:
             logger.error(f"資料庫寫入時發生錯誤: {ex}")
-            if conn:
-                conn.rollback()
-                logger.warning("交易已回滾。")
+            # rollback handled by _get_connection
             raise
-        finally:
-            if "cursor" in locals() and cursor:
-                cursor.close()
-            if conn:
-                conn.close()
 
     def get_alert_info(self, error_id: int, detected_anomaly_type: str):
         """用 error_id 跟 detected_anomaly_type 取得單筆警報的資訊"""
@@ -633,14 +830,20 @@ class Database:
                     return {"equipment_id": row[0]}
                 return None
         except pyodbc.Error as e:
-            logger.error(f"查詢警報資訊 (error_id: {error_id}), detected_anomaly_type: {detected_anomaly_type}) 失敗: {e}")
+            logger.error(
+                "查詢警報資訊 (error_id: %s), detected_anomaly_type: %s) 失敗: %s",
+                error_id,
+                detected_anomaly_type,
+                e,
+            )
             return None
 
     def resolve_alert_history(self, log_data: dict):
         """
         將指定的警報紀錄更新為已解決狀態
         """
-        # 更新指定 alert_history 欄位內容，依照 error_id 跟 detected_anomaly_type 跟 equipment_id 作為條件
+        # 更新指定 alert_history 欄位內容，依照 error_id 跟 detected_anomaly_type
+        # 跟 equipment_id 作為條件
         sql_alert_history = """
         UPDATE alert_history
            SET is_resolved = 1,
@@ -648,7 +851,8 @@ class Database:
                resolved_by = ?,
                resolution_notes = ?
         OUTPUT inserted.resolved_time
-         WHERE error_id = ? AND detected_anomaly_type = ? AND equipment_id = ? AND (is_resolved = 0);
+         WHERE error_id = ? AND detected_anomaly_type = ? AND equipment_id = ?
+           AND (is_resolved = 0);
         """
         # 更新指定 error_logs 欄位內容
         sql_error_log = """
@@ -657,89 +861,100 @@ class Database:
                downtime_sec = DATEDIFF(second, event_time, GETDATE())
          WHERE error_id = ?;
         """
-        conn = None
-        try:
-            conn = self._get_connection()
-            cursor = conn.cursor()
-            notes = log_data.get("resolution_notes")
-            if notes == "":
-                notes = None
-            # 確保 log_data 包含必要欄位
-            cursor.execute(sql_alert_history,
-                           log_data["resolved_by"],
-                           notes,
-                           log_data["error_id"],
-                           log_data["detected_anomaly_type"],
-                           log_data["equipment_id"]
-                           )
 
-            newly_resolved_time = cursor.fetchone()  # 取得更新後 OUTPUT 的時間
-            if newly_resolved_time:
-                # alert_history 成功更新，才更新 error_logs
-                cursor.execute(sql_error_log, log_data["error_id"])
-                # 成功更新這筆警報
-                conn.commit()
-                logger.info(
-                    f"成功將 error_id: {log_data['error_id']} / "
-                    f"detected_anomaly_type: {log_data['detected_anomaly_type']} / "
-                    f"equipment_id: {log_data['equipment_id']} 的警報標示為已解決。"
+        try:
+            # Modified to use context manager correctly
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                notes = log_data.get("resolution_notes")
+                if notes == "":
+                    notes = None
+                # 確保 log_data 包含必要欄位
+                cursor.execute(
+                    sql_alert_history,
+                    log_data["resolved_by"],
+                    notes,
+                    log_data["error_id"],
+                    log_data["detected_anomaly_type"],
+                    log_data["equipment_id"],
                 )
-                return newly_resolved_time[0]
-            else:
+
+                newly_resolved_time = cursor.fetchone()  # 取得更新後 OUTPUT 的時間
+                if newly_resolved_time:
+                    # alert_history 成功更新，才更新 error_logs
+                    cursor.execute(sql_error_log, log_data["error_id"])
+                    # conn.commit() # Handled by _get_connection
+                    logger.info(
+                        "成功將 error_id: %s / detected_anomaly_type: %s / "
+                        "equipment_id: %s 的警報標示為已解決。",
+                        log_data["error_id"],
+                        log_data["detected_anomaly_type"],
+                        log_data["equipment_id"],
+                    )
+                    return newly_resolved_time[0]
+
                 # 檢查這筆警報是否是已解決
                 check_sql = (
                     "SELECT resolved_time FROM alert_history "
-                    "WHERE error_id = ? AND detected_anomaly_type = ? AND equipment_id = ? AND is_resolved = 1;"
+                    "WHERE error_id = ? AND detected_anomaly_type = ? "
+                    "AND equipment_id = ? AND is_resolved = 1;"
                 )
                 cursor.execute(
                     check_sql,
-                    log_data['error_id'],
-                    log_data['detected_anomaly_type'],
-                    log_data['equipment_id']
+                    log_data["error_id"],
+                    log_data["detected_anomaly_type"],
+                    log_data["equipment_id"],
                 )
                 already_resolved_time = cursor.fetchone()
 
                 if already_resolved_time:
                     # 警報先前已是解決狀態
                     logger.info(
-                        f"嘗試解決的 error_id: {log_data['error_id']} / "
-                        f"equipment_id: {log_data['equipment_id']} / "
-                        f"detected_anomaly_type: {log_data['detected_anomaly_type']} 先前已被解決。"
+                        "嘗試解決的 error_id: %s / equipment_id: %s / "
+                        "detected_anomaly_type: %s 先前已被解決。",
+                        log_data["error_id"],
+                        log_data["equipment_id"],
+                        log_data["detected_anomaly_type"],
                     )
                     return (already_resolved_time[0], "already_resolved")
-                else:
-                    # 資料庫不存在這筆 error_id
-                    logger.warning(
-                        f"嘗試更新警報，但找不到對應的 error_id: {log_data['error_id']} /"
-                        f"detected_anomaly_type: {log_data['detected_anomaly_type']}。"
-                        f"和equipment_id: {log_data['equipment_id']}。"
-                    )
-                    return None
+
+                # 資料庫不存在這筆 error_id
+                logger.warning(
+                    "嘗試更新警報，但找不到對應的 error_id: %s / "
+                    "detected_anomaly_type: %s。和equipment_id: %s。",
+                    log_data["error_id"],
+                    log_data["detected_anomaly_type"],
+                    log_data["equipment_id"],
+                )
+                return None
 
         except pyodbc.Error as ex:
-            error_id_val = log_data.get('error_id', 'N/A')   # 取得 error_id 或預設N/A'
-            detected_anomaly_type_val = log_data.get('detected_anomaly_type', 'N/A')  # 取得 detected_anomaly_type 或預設N/A'
-            equipment_id_val = log_data.get('equipment_id', 'N/A')  # 取得 equipment_id 或預設N/A'
-            logger.error(
-                f"更新警報 (error_id: {error_id_val}), "
-                f"detected_anomaly_type: {detected_anomaly_type_val}) "
-                f"時發生資料庫錯誤: {ex}"
+            # 取得 error_id 或預設 N/A
+            error_id_val = log_data.get("error_id", "N/A")
+            detected_anomaly_type_val = log_data.get(
+                "detected_anomaly_type",
+                "N/A",
+            )  # 取得 detected_anomaly_type 或預設 N/A
+            equipment_id_val = log_data.get(
+                "equipment_id",
+                "N/A",
             )
-            if conn:
-                conn.rollback()
-                logger.warning("交易已回滾。")
+            logger.error(
+                "更新警報 (error_id: %s), detected_anomaly_type: %s, "
+                "equipment_id: %s) 時發生資料庫錯誤: %s",
+                error_id_val,
+                detected_anomaly_type_val,
+                equipment_id_val,
+                ex,
+            )
+            # rollback handled by _get_connection
             raise
-
-        finally:
-            if "cursor" in locals() and cursor:
-                cursor.close()
-            if conn:
-                conn.close()
 
     def get_subscribed_users(self, equipment_id: str):
         """取得訂閱指定設備的所有使用者 ID"""
         sql = (
-            "SELECT user_id FROM user_equipment_subscriptions WHERE equipment_id = ?;"
+            "SELECT user_id FROM user_equipment_subscriptions "
+            "WHERE equipment_id = ?;"
         )
         try:
             with self._get_connection() as conn:
