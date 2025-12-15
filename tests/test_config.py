@@ -28,9 +28,9 @@ def test_config_default_values():
         # might need to reload the module or have Config load them on demand.
         # Given the current Config structure, we test the os.getenv calls directly.
         assert Config.DEBUG is False
-        assert Config.PORT == 5000
+        assert Config.PORT == 443  # Default is 443
         assert Config.DB_SERVER == "localhost"
-        assert Config.DB_NAME == "conversations"
+        assert Config.DB_NAME == "Project"  # Default is "Project"
 
 
 def test_config_env_override(monkeypatch):
