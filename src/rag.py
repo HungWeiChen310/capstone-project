@@ -187,7 +187,7 @@ class RAGKnowledgeBase:
                 "table": "equipment",
                 "source_tag": "Equipment",
                 "id_columns": ["equipment_id"],
-                "text_columns": ["name", "equipment_type", "status", "location"],
+                "text_columns": ["equipment_id", "name", "equipment_type", "status", "location"],
                 "meta_columns": ["equipment_id", "equipment_type"],
             },
             {
@@ -195,8 +195,17 @@ class RAGKnowledgeBase:
                 "table": "alert_history",
                 "source_tag": "Alert",
                 "id_columns": ["error_id"],
-                "text_columns": ["detected_anomaly_type", "severity_level", "resolution_notes"],
+                "text_columns": ["equipment_id", "detected_anomaly_type", "severity_level", "resolution_notes"],
                 "meta_columns": ["equipment_id", "is_resolved"],
+            },
+            {
+                "query": "SELECT TOP 50 * FROM error_logs ORDER BY created_time DESC",
+                "table": "error_logs",
+                "source_tag": "ErrorLog",
+                "id_columns": ["error_id"],
+                "text_columns": ["equipment_id", "detected_anomaly_type", "severity_level", "rpm",
+                                 "deformation_mm", "created_time", "resolved_time", "downtime_sec"],
+                "meta_columns": ["equipment_id",],
             },
         ]
 
