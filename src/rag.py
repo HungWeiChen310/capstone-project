@@ -19,9 +19,14 @@ import pyodbc
 import torch
 from sentence_transformers import SentenceTransformer
 
-from .database import db
-from . import database
-from .utils import _format_value
+try:
+    from .database import db
+    from . import database
+    from .utils import _format_value
+except ImportError:
+    from database import db
+    import database
+    from utils import _format_value
 
 logger = logging.getLogger(__name__)
 
@@ -187,7 +192,7 @@ class RAGKnowledgeBase:
                 "table": "equipment",
                 "source_tag": "Equipment",
                 "id_columns": ["equipment_id"],
-                "text_columns": ["equipment_id", "name", "equipment_type", "status", "location"],
+                "text_columns": ["name", "equipment_type", "status", "location"],
                 "meta_columns": ["equipment_id", "equipment_type"],
             },
             {
@@ -199,13 +204,28 @@ class RAGKnowledgeBase:
                 "meta_columns": ["equipment_id", "is_resolved"],
             },
             {
-                "query": "SELECT TOP 50 * FROM error_logs ORDER BY created_time DESC",
+                "query": "SELECT TOP 100 * FROM error_logs ORDER BY log_date DESC",
                 "table": "error_logs",
                 "source_tag": "ErrorLog",
-                "id_columns": ["error_id"],
-                "text_columns": ["equipment_id", "detected_anomaly_type", "severity_level", "rpm",
-                                 "deformation_mm", "created_time", "resolved_time", "downtime_sec"],
-                "meta_columns": ["equipment_id",],
+                "id_columns": ["log_date", "equipment_id", "error_id"],
+                "text_columns": ["log_date", "equipment_id", "detected_anomaly_type", "severity_level", "downtime_sec"],
+                "meta_columns": ["equipment_id", "severity_level"],
+            },
+            {
+                "query": "SELECT * FROM stats_operational_monthly",
+                "table": "stats_operational_monthly",
+                "source_tag": "StatsOpMonthly",
+                "id_columns": ["equipment_id", "year", "month"],
+                "text_columns": ["equipment_id", "year", "month", "total_operation_hrs", "downtime_rate_percent"],
+                "meta_columns": ["equipment_id", "year", "month"],
+            },
+            {
+                "query": "SELECT * FROM stats_abnormal_monthly",
+                "table": "stats_abnormal_monthly",
+                "source_tag": "StatsAbnormalMonthly",
+                "id_columns": ["equipment_id", "year", "month", "detected_anomaly_type"],
+                "text_columns": ["equipment_id", "year", "month", "detected_anomaly_type", "downtime_sec", "downtime_rate_percent"],
+                "meta_columns": ["equipment_id", "year", "month", "detected_anomaly_type"],
             },
         ]
 
