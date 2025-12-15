@@ -12,7 +12,7 @@ from linebot.v3.messaging import (
 )
 from linebot.v3.messaging.exceptions import ApiException
 from ..database import db
-from src import reply
+from src.services.command_service import dispatch_command
 from src.main import reply_message as main_reply_message
 
 logger = logging.getLogger(__name__)
@@ -109,7 +109,7 @@ def process_message_in_background(event):
 
     db.get_user_preference(user_id)
 
-    reply_message_obj = reply.dispatch_command(
+    reply_message_obj = dispatch_command(
         text_lower, db, user_id
     )
     if reply_message_obj is None:
