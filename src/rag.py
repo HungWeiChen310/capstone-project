@@ -216,7 +216,7 @@ class RAGKnowledgeBase:
                 "table": "stats_operational_monthly",
                 "source_tag": "StatsOpMonthly",
                 "id_columns": ["equipment_id", "year", "month"],
-                "text_columns": ["equipment_id", "year", "month", "total_operation_hrs", "downtime_rate_percent"],
+                "text_columns": ["equipment_id", "year", "month", "total_operation_hrs", "downtime_sec", "downtime_rate_percent", "notes"],
                 "meta_columns": ["equipment_id", "year", "month"],
             },
             {
@@ -232,7 +232,7 @@ class RAGKnowledgeBase:
                 "table": "stats_operational_quarterly",
                 "source_tag": "StatsOpQuarterly",
                 "id_columns": ["equipment_id", "year", "quarter"],
-                "text_columns": ["equipment_id", "year", "quarter", "total_operation_hrs", "downtime_rate_percent"],
+                "text_columns": ["equipment_id", "year", "quarter", "total_operation_hrs", "downtime_sec", "downtime_rate_percent", "notes"],
                 "meta_columns": ["equipment_id", "year", "quarter"],
             },
             {
@@ -240,7 +240,7 @@ class RAGKnowledgeBase:
                 "table": "stats_operational_yearly",
                 "source_tag": "StatsOpYearly",
                 "id_columns": ["equipment_id", "year"],
-                "text_columns": ["equipment_id", "year", "total_operation_hrs", "downtime_rate_percent"],
+                "text_columns": ["equipment_id", "year", "total_operation_hrs", "downtime_sec", "downtime_rate_percent", "notes"],
                 "meta_columns": ["equipment_id", "year"],
             },
             {
