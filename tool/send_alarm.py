@@ -2,26 +2,6 @@
 import requests
 
 
-def severity_for_rpm_low(rpm: float) -> str:
-    if rpm < 18000:
-        return "重度異常"
-    if rpm < 24000:
-        return "中度異常"
-    if rpm < 27000:
-        return "輕度異常"
-    return "輕度異常"
-
-
-def severity_for_deformation(deformation_mm: float) -> str:
-    if deformation_mm > 0.1:
-        return "重度異常"
-    if deformation_mm > 0.05:
-        return "中度異常"
-    if deformation_mm >= 0.01:
-        return "輕度異常"
-    return "輕度異常"
-
-
 def send_json() -> None:
     url = "https://127.0.0.1:443/alarms"
 
@@ -32,18 +12,18 @@ def send_json() -> None:
 
     if payload["detected_anomaly_type"] == "轉速過低":
         rpm = 15000
-        deformation_mm = 0 #固定值
+        deformation_mm = 0  # 固定值
         payload["rpm"] = rpm
         payload["severity_level"] = severity_for_rpm_low(rpm)
 
     elif payload["detected_anomaly_type"] == "刀具裂痕":
-        rpm = 30000 # 固定值
+        rpm = 30000  # 固定值
         deformation_mm = 0.8
         payload["deformation_mm"] = deformation_mm
         payload["severity_level"] = severity_for_deformation(deformation_mm)
 
     elif payload["detected_anomaly_type"] == "刀具變形":
-        rpm = 30000 # 固定值
+        rpm = 30000  # 固定值
         deformation_mm = 0.8
         payload["deformation_mm"] = deformation_mm
         payload["severity_level"] = severity_for_deformation(deformation_mm)
@@ -60,7 +40,23 @@ def send_json() -> None:
     except requests.RequestException as e:
         print("Request failed:", e)
 
+def severity_for_rpm_low(rpm: float) -> str:
+    if rpm < 18000:
+        return "emergency"
+    if rpm < 24000:
+        return "critical"
+    if rpm < 27000:
+        return "warning"
+    return "warning"
+
+def severity_for_deformation(deformation_mm: float) -> str:
+    if deformation_mm > 0.1:
+        return "emergency"
+    if deformation_mm > 0.05:
+        return "critical"
+    if deformation_mm >= 0.01:
+        return "warning"
+    return "warning"
 
 if __name__ == "__main__":
     send_json()
-
