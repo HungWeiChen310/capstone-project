@@ -2,7 +2,7 @@
 from flask import request, jsonify
 from . import alarm_bp
 from ..database import db
-from ..services.line_service import send_notification, send_multicast_notification
+from ..services.line_service import send_multicast_notification
 import logging
 import datetime
 
