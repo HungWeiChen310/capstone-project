@@ -3,6 +3,9 @@ import os
 import sys
 import pyodbc
 import datetime
+import contextlib
+import threading
+from queue import Queue, Empty, Full
 
 if __package__ is None or __package__ == "":
     import pathlib
@@ -16,6 +19,70 @@ from .config import Config
 logger = logging.getLogger(__name__)
 
 
+class SimpleConnectionPool:
+    """
+    A simple thread-safe connection pool for PyODBC connections.
+    """
+    def __init__(self, connect_func, max_size=10, timeout=5):
+        self.connect_func = connect_func
+        self.max_size = max_size
+        self.timeout = timeout
+        self.pool = Queue(maxsize=max_size)
+        self._created_count = 0
+        self._lock = threading.Lock()
+
+    def get_connection(self):
+        """Retrieves a connection from the pool, creating a new one if necessary."""
+        try:
+            return self.pool.get(block=False)
+        except Empty:
+            with self._lock:
+                if self._created_count < self.max_size:
+                    try:
+                        conn = self.connect_func()
+                        self._created_count += 1
+                        return conn
+                    except Exception as e:
+                        logger.error(f"Failed to create new DB connection: {e}")
+                        raise
+
+            # If pool is full, wait for a connection to be returned
+            try:
+                return self.pool.get(timeout=self.timeout)
+            except Empty:
+                logger.error("Database connection pool exhausted.")
+                raise Exception("Database connection pool exhausted")
+
+    def return_connection(self, conn):
+        """Returns a connection to the pool, rolling back any pending transaction."""
+        if conn is None:
+            return
+
+        try:
+            # Ensure clean state for the next user
+            conn.rollback()
+            self.pool.put(conn, block=False)
+        except (Full, pyodbc.Error, Exception):
+            # If pool is full or connection is dead, close it
+            try:
+                conn.close()
+            except Exception:
+                pass
+            with self._lock:
+                self._created_count -= 1
+
+    def close_all(self):
+        """Closes all connections in the pool."""
+        while not self.pool.empty():
+            try:
+                conn = self.pool.get(block=False)
+                conn.close()
+            except (Empty, Exception):
+                pass
+        with self._lock:
+            self._created_count = 0
+
+
 class Database:
     """處理對話記錄與使用者偏好儲存的資料庫處理程序"""
 
@@ -26,11 +93,9 @@ class Database:
         resolved_user = user if user is not None else Config.DB_USER
         resolved_password = password if password is not None else Config.DB_PASSWORD
 
-        # if not resolved_user or not resolved_password:
-        #    logger.error("缺少 DB_USER 或 DB_PASSWORD，無法使用帳號密碼登入 SQL Server。")
-        #    raise ValueError("DB_USER 與 DB_PASSWORD 為必填，請確認環境變數設定。")
         logger.info("初始化資料庫連線字串...")
-        logger.info(f"使用的伺服器: {(os.getenv('Windows_login')).lower()}, 伺服器: {resolved_server}, 資料庫: {resolved_database}")
+        logger.info(f"使用的伺服器: {(os.getenv('Windows_login') or '').lower()}, 伺服器: {resolved_server}, 資料庫: {resolved_database}")
+
         if bool(os.getenv("Windows_login")) is False:
             self.connection_string = (
                 f"DRIVER={{{Config.DB_ODBC_DRIVER}}};"
@@ -49,11 +114,36 @@ class Database:
                 f"DATABASE={resolved_database};"
                 "Trusted_Connection=yes;"
             )
+
+        # Initialize connection pool
+        self.pool = SimpleConnectionPool(self._create_new_connection, max_size=10)
         self._initialize_db()
 
-    def _get_connection(self):
-        """建立並回傳資料庫連線"""
+    def _create_new_connection(self):
+        """建立一個新的資料庫連線 (供 Pool 使用)"""
         return pyodbc.connect(self.connection_string)
+
+    @contextlib.contextmanager
+    def _get_connection(self):
+        """
+        取得資料庫連線的 Context Manager (使用 Connection Pool)。
+        Usage:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                ...
+        """
+        conn = self.pool.get_connection()
+        try:
+            yield conn
+            # Commit on success (imitating pyodbc context manager behavior)
+            conn.commit()
+        except Exception:
+            # Rollback on error
+            conn.rollback()
+            raise
+        finally:
+            # Always return to pool
+            self.pool.return_connection(conn)
 
     def _initialize_db(self):
         """
@@ -264,7 +354,7 @@ class Database:
                 """
                 self._create_table_if_not_exists(init_cur, "stats_operational_yearly", stats_operational_yearly_cols)
 
-                conn.commit()
+                # conn.commit() # Handled by _get_connection context manager
                 logger.info(
                     "資料庫表格初始化/檢查完成 (已建立主鍵與外鍵約束)。"
                 )
@@ -309,7 +399,7 @@ class Database:
                         """,
                         ("bot", "zh-Hant", "assistant", "System Bot"),
                     )
-                    conn.commit()
+                    # conn.commit() # Handled by _get_connection
         except pyodbc.Error as e:
             logger.exception(f"確保系統 bot 使用者存在時發生錯誤: {e}")
 
@@ -326,7 +416,7 @@ class Database:
                     """,
                     (sender_id, receiver_id, sender_role, content)
                 )
-            conn.commit()
+                # conn.commit() # Handled by _get_connection
             return True
         except pyodbc.Error as e:
             logger.exception(f"新增對話記錄失敗: {e}")
@@ -503,7 +593,7 @@ class Database:
                         """,
                         (user_id, language or "zh-Hant", role or "user")
                     )
-                conn.commit()
+                # conn.commit() # Handled by _get_connection
                 return True
         except pyodbc.Error as e:
             logger.exception(f"設定使用者偏好失敗: {e}")
@@ -570,52 +660,44 @@ class Database:
         # 取得目前最大的 error_id，並加 1 作為新的 error_id
         sql_get_max = "SELECT ISNULL(MAX(error_id), 0) FROM alert_history;"
 
-        conn = None
         try:
-            # 用傳進來的 db 去拿連線
-            conn = db._get_connection()
-            cursor = conn.cursor()
+            # Modified to use context manager correctly
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
 
-            # 共用 error_id 和 event_time
-            cursor.execute(sql_get_max)
-            latest_error_id = cursor.fetchone()[0] + 1
-            event_time = datetime.datetime.now()  # 原使用GETDATE()，改成datetime.now
+                # 共用 error_id 和 event_time
+                cursor.execute(sql_get_max)
+                latest_error_id = cursor.fetchone()[0] + 1
+                event_time = datetime.datetime.now()
 
-            # 寫入 alert_history
-            cursor.execute(sql_alert_history,
-                           latest_error_id,
-                           log_data["equipment_id"],
-                           log_data["detected_anomaly_type"],
-                           log_data["severity_level"],
-                           event_time
-                           )
+                # 寫入 alert_history
+                cursor.execute(sql_alert_history,
+                            latest_error_id,
+                            log_data["equipment_id"],
+                            log_data["detected_anomaly_type"],
+                            log_data["severity_level"],
+                            event_time
+                            )
 
-            # 寫入 error_logs
-            cursor.execute(sql_error_log,
-                           event_time.date(),
-                           latest_error_id,
-                           log_data["equipment_id"],
-                           log_data.get("deformation_mm", 0),
-                           log_data.get("rpm", 30000),  # 預設30000
-                           event_time,
-                           log_data["detected_anomaly_type"],
-                           log_data["severity_level"]
-                           )
+                # 寫入 error_logs
+                cursor.execute(sql_error_log,
+                            event_time.date(),
+                            latest_error_id,
+                            log_data["equipment_id"],
+                            log_data.get("deformation_mm", 0),
+                            log_data.get("rpm", 30000),  # 預設30000
+                            event_time,
+                            log_data["detected_anomaly_type"],
+                            log_data["severity_level"]
+                            )
 
-            conn.commit()
-            logger.info(f"成功寫入一筆異常紀錄，equipment_id: {log_data['equipment_id']}")
-            return {"error_id": latest_error_id, "created_time": event_time}
+                # conn.commit() # Handled by _get_connection context manager
+                logger.info(f"成功寫入一筆異常紀錄，equipment_id: {log_data['equipment_id']}")
+                return {"error_id": latest_error_id, "created_time": event_time}
         except pyodbc.Error as ex:
             logger.error(f"資料庫寫入時發生錯誤: {ex}")
-            if conn:
-                conn.rollback()
-                logger.warning("交易已回滾。")
+            # rollback handled by _get_connection
             raise
-        finally:
-            if "cursor" in locals() and cursor:
-                cursor.close()
-            if conn:
-                conn.close()
 
     def get_alert_info(self, error_id: int, detected_anomaly_type: str):
         """用 error_id 跟 detected_anomaly_type 取得單筆警報的資訊"""
@@ -657,64 +739,64 @@ class Database:
                downtime_sec = DATEDIFF(second, event_time, GETDATE())
          WHERE error_id = ?;
         """
-        conn = None
+
         try:
-            conn = self._get_connection()
-            cursor = conn.cursor()
-            notes = log_data.get("resolution_notes")
-            if notes == "":
-                notes = None
-            # 確保 log_data 包含必要欄位
-            cursor.execute(sql_alert_history,
-                           log_data["resolved_by"],
-                           notes,
-                           log_data["error_id"],
-                           log_data["detected_anomaly_type"],
-                           log_data["equipment_id"]
-                           )
+            # Modified to use context manager correctly
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                notes = log_data.get("resolution_notes")
+                if notes == "":
+                    notes = None
+                # 確保 log_data 包含必要欄位
+                cursor.execute(sql_alert_history,
+                            log_data["resolved_by"],
+                            notes,
+                            log_data["error_id"],
+                            log_data["detected_anomaly_type"],
+                            log_data["equipment_id"]
+                            )
 
-            newly_resolved_time = cursor.fetchone()  # 取得更新後 OUTPUT 的時間
-            if newly_resolved_time:
-                # alert_history 成功更新，才更新 error_logs
-                cursor.execute(sql_error_log, log_data["error_id"])
-                # 成功更新這筆警報
-                conn.commit()
-                logger.info(
-                    f"成功將 error_id: {log_data['error_id']} / "
-                    f"detected_anomaly_type: {log_data['detected_anomaly_type']} / "
-                    f"equipment_id: {log_data['equipment_id']} 的警報標示為已解決。"
-                )
-                return newly_resolved_time[0]
-            else:
-                # 檢查這筆警報是否是已解決
-                check_sql = (
-                    "SELECT resolved_time FROM alert_history "
-                    "WHERE error_id = ? AND detected_anomaly_type = ? AND equipment_id = ? AND is_resolved = 1;"
-                )
-                cursor.execute(
-                    check_sql,
-                    log_data['error_id'],
-                    log_data['detected_anomaly_type'],
-                    log_data['equipment_id']
-                )
-                already_resolved_time = cursor.fetchone()
-
-                if already_resolved_time:
-                    # 警報先前已是解決狀態
+                newly_resolved_time = cursor.fetchone()  # 取得更新後 OUTPUT 的時間
+                if newly_resolved_time:
+                    # alert_history 成功更新，才更新 error_logs
+                    cursor.execute(sql_error_log, log_data["error_id"])
+                    # conn.commit() # Handled by _get_connection
                     logger.info(
-                        f"嘗試解決的 error_id: {log_data['error_id']} / "
-                        f"equipment_id: {log_data['equipment_id']} / "
-                        f"detected_anomaly_type: {log_data['detected_anomaly_type']} 先前已被解決。"
+                        f"成功將 error_id: {log_data['error_id']} / "
+                        f"detected_anomaly_type: {log_data['detected_anomaly_type']} / "
+                        f"equipment_id: {log_data['equipment_id']} 的警報標示為已解決。"
                     )
-                    return (already_resolved_time[0], "already_resolved")
+                    return newly_resolved_time[0]
                 else:
-                    # 資料庫不存在這筆 error_id
-                    logger.warning(
-                        f"嘗試更新警報，但找不到對應的 error_id: {log_data['error_id']} /"
-                        f"detected_anomaly_type: {log_data['detected_anomaly_type']}。"
-                        f"和equipment_id: {log_data['equipment_id']}。"
+                    # 檢查這筆警報是否是已解決
+                    check_sql = (
+                        "SELECT resolved_time FROM alert_history "
+                        "WHERE error_id = ? AND detected_anomaly_type = ? AND equipment_id = ? AND is_resolved = 1;"
                     )
-                    return None
+                    cursor.execute(
+                        check_sql,
+                        log_data['error_id'],
+                        log_data['detected_anomaly_type'],
+                        log_data['equipment_id']
+                    )
+                    already_resolved_time = cursor.fetchone()
+
+                    if already_resolved_time:
+                        # 警報先前已是解決狀態
+                        logger.info(
+                            f"嘗試解決的 error_id: {log_data['error_id']} / "
+                            f"equipment_id: {log_data['equipment_id']} / "
+                            f"detected_anomaly_type: {log_data['detected_anomaly_type']} 先前已被解決。"
+                        )
+                        return (already_resolved_time[0], "already_resolved")
+                    else:
+                        # 資料庫不存在這筆 error_id
+                        logger.warning(
+                            f"嘗試更新警報，但找不到對應的 error_id: {log_data['error_id']} /"
+                            f"detected_anomaly_type: {log_data['detected_anomaly_type']}。"
+                            f"和equipment_id: {log_data['equipment_id']}。"
+                        )
+                        return None
 
         except pyodbc.Error as ex:
             error_id_val = log_data.get('error_id', 'N/A')   # 取得 error_id 或預設N/A'
@@ -725,16 +807,8 @@ class Database:
                 f"detected_anomaly_type: {detected_anomaly_type_val}) "
                 f"時發生資料庫錯誤: {ex}"
             )
-            if conn:
-                conn.rollback()
-                logger.warning("交易已回滾。")
+            # rollback handled by _get_connection
             raise
-
-        finally:
-            if "cursor" in locals() and cursor:
-                cursor.close()
-            if conn:
-                conn.close()
 
     def get_subscribed_users(self, equipment_id: str):
         """取得訂閱指定設備的所有使用者 ID"""
