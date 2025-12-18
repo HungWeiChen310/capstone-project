@@ -225,6 +225,14 @@ class Database:
                     "sender_id, timestamp DESC",
                 )
 
+                # Add index for conversations
+                self._create_index_if_not_exists(
+                    init_cur,
+                    "idx_conversations_sender_timestamp",
+                    "conversations",
+                    ["sender_id", "timestamp"],
+                )
+
                 # 4. user_equipment_subscriptions
                 user_equipment_subscriptions_cols = """
                     [subscription_id] INT IDENTITY(1,1) PRIMARY KEY,
@@ -245,6 +253,14 @@ class Database:
                     init_cur,
                     "user_equipment_subscriptions",
                     user_equipment_subscriptions_cols,
+                )
+
+                # Add index for equipment_id lookups
+                self._create_index_if_not_exists(
+                    init_cur,
+                    "idx_subscriptions_equipment",
+                    "user_equipment_subscriptions",
+                    ["equipment_id"],
                 )
 
                 # 5. alert_history
@@ -471,18 +487,11 @@ class Database:
             logger.info(f"資料表 '{table_name}' 已存在，跳過建立。")
 
     def _create_index_if_not_exists(
-        self,
-        cursor,
-        table_name,
-        index_name,
-        columns,
+        self, cursor, index_name, table_name, columns
     ):
         """
-        通用方法，用於檢查並建立索引
-        :param cursor: 資料庫游標
-        :param table_name: 資料表名稱
-        :param index_name: 索引名稱
-        :param columns: 索引包含的欄位 (e.g., "column1, column2 DESC")
+        Creates an index if it does not already exist.
+        columns: List of column names to include in the index.
         """
         check_index_sql = (
             "SELECT COUNT(*) FROM sys.indexes "
@@ -490,18 +499,14 @@ class Database:
         )
         cursor.execute(check_index_sql, (index_name, table_name))
         if cursor.fetchone()[0] == 0:
+            cols_str = ", ".join(columns)
             create_index_sql = (
-                f"CREATE INDEX {index_name} ON {table_name} ({columns});"
+                f"CREATE INDEX {index_name} ON {table_name} ({cols_str});"
             )
             cursor.execute(create_index_sql)
-            logger.info(
-                f"資料表 '{table_name}' 的索引 '{index_name}' 已建立。"
-            )
+            logger.info(f"索引 '{index_name}' 於 '{table_name}' 已建立。")
         else:
-            logger.info(
-                f"資料表 '{table_name}' 的索引 '{index_name}' "
-                "已存在，跳過建立。"
-            )
+            logger.info(f"索引 '{index_name}' 於 '{table_name}' 已存在，跳過建立。")
 
     def _ensure_system_user(self):
         """Ensure the system bot account exists for conversation history."""
