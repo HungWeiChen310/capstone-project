@@ -218,6 +218,12 @@ class Database:
                     "conversations",
                     conversations_cols,
                 )
+                self._create_index_if_not_exists(
+                    init_cur,
+                    "conversations",
+                    "IX_conversations_sender_timestamp",
+                    "sender_id, timestamp DESC",
+                )
 
                 # Add index for conversations
                 self._create_index_if_not_exists(
