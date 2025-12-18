@@ -218,19 +218,12 @@ class Database:
                     "conversations",
                     conversations_cols,
                 )
-                self._create_index_if_not_exists(
-                    init_cur,
-                    "conversations",
-                    "IX_conversations_sender_timestamp",
-                    "sender_id, timestamp DESC",
-                )
-
-                # Add index for conversations
+                # Add index for conversations (sender_id + timestamp for fast history lookup)
                 self._create_index_if_not_exists(
                     init_cur,
                     "idx_conversations_sender_timestamp",
                     "conversations",
-                    ["sender_id", "timestamp"],
+                    ["sender_id", "[timestamp] DESC"],
                 )
 
                 # 4. user_equipment_subscriptions
