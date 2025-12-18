@@ -212,9 +212,19 @@ class OllamaService:
 
         user_data.add_message(self.user_id, "user", self.message)
 
+        access_denial = self._check_subscription_access()
+        if access_denial:
+            user_data.add_message(self.user_id, "assistant", access_denial)
+            return access_denial
+
         # Build access control instruction
         access_instruction = ""
-        if self.subscribed_machines:
+        if self._is_admin_user():
+            access_instruction = (
+                "\n[IMPORTANT ACCESS CONTROL]\n"
+                "The user is an admin. They may access all machines.\n"
+            )
+        elif self.subscribed_machines:
             machine_list = ", ".join(self.subscribed_machines)
             access_instruction = (
                 f"\n[IMPORTANT ACCESS CONTROL]\n"
@@ -313,6 +323,27 @@ class OllamaService:
             logging.info("RAG search returned no results for query: '%s'", self.message)
             return None
 
+        # Enforce subscription access control at retrieval-time to avoid leaking other machines into context.
+        if not self._is_admin_user():
+            subscribed = {m.upper() for m in (self.subscribed_machines or [])}
+            filtered_results: List[RetrievalResult] = []
+            filtered_out = 0
+            for result in results:
+                metadata = result.document.metadata or {}
+                if metadata.get("origin") == "database":
+                    equipment_id = (metadata.get("equipment_id") or "").upper()
+                    if equipment_id and equipment_id not in subscribed:
+                        filtered_out += 1
+                        continue
+                filtered_results.append(result)
+            if filtered_out:
+                logging.info("RAG access filter removed %s DB results for unsubscribed machines.", filtered_out)
+            results = filtered_results
+
+        if not results:
+            logging.info("RAG results filtered out by subscription access control.")
+            return None
+
         formatted_sections = []
         sources_for_log = []
         for result in results:
@@ -343,6 +374,50 @@ class OllamaService:
             context = context[:self.rag_max_context_chars - 4] + "\n..."
         logging.info("RAG reply: %s", context)
         return context
+
+    def _is_admin_user(self) -> bool:
+        value = self.user_prefs.get("is_admin")
+        if isinstance(value, bool):
+            return value
+        try:
+            return bool(int(value))
+        except (TypeError, ValueError):
+            return False
+
+    def _extract_equipment_ids(self, text: str) -> List[str]:
+        if not text:
+            return []
+        matches = re.findall(r"(?i)eq\s*(\d{3})", text)
+        equipment_ids = {f"EQ{digits}" for digits in matches if digits}
+        return sorted(equipment_ids)
+
+    def _check_subscription_access(self) -> Optional[str]:
+        if self._is_admin_user():
+            return None
+
+        mentioned = self._extract_equipment_ids(self.message)
+        if not mentioned:
+            return None
+
+        subscribed = {m.upper() for m in (self.subscribed_machines or [])}
+        unauthorized = [m for m in mentioned if m.upper() not in subscribed]
+        if not unauthorized:
+            return None
+
+        if subscribed:
+            subscribed_text = "、".join(sorted(subscribed))
+            unauthorized_text = "、".join(unauthorized)
+            return (
+                f"抱歉，您目前未訂閱 {unauthorized_text}，因此我無法提供該機台的資料。\n"
+                f"您目前訂閱的機台：{subscribed_text}\n"
+                f"如需查詢 {unauthorized[0]}，請先輸入「訂閱設備 {unauthorized[0]}」，或輸入「我的訂閱」。"
+            )
+
+        unauthorized_text = "、".join(unauthorized)
+        return (
+            f"抱歉，您目前尚未訂閱任何機台，因此無法查詢 {unauthorized_text} 的資料。\n"
+            "請先輸入「訂閱設備 EQ001」(或其他機台)，或輸入「我的訂閱」。"
+        )
 
     @staticmethod
     def _parse_int(value, default):

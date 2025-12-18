@@ -564,14 +564,20 @@ class RAGKnowledgeBase:
         return final_results
 
     def _extract_query_hints(self, query: str) -> Dict[str, Any]:
+        query_lower = (query or "").lower()
         wants_breakdown = any(
             keyword in query
             for keyword in (
                 "類型",
+                "分類",
                 "分佈",
+                "分布",
+                "占比",
+                "比例",
                 "分項",
                 "細項",
                 "明細",
+                "詳情",
                 "各類",
                 "各種",
             )
@@ -581,6 +587,7 @@ class RAGKnowledgeBase:
             keyword in query
             for keyword in (
                 "總情況",
+                "總狀況",
                 "總覽",
                 "彙總",
                 "總計",
@@ -588,11 +595,12 @@ class RAGKnowledgeBase:
                 "整體",
                 "概況",
                 "概覽",
+                "統計",
                 "停機率",
                 "停機秒數",
                 "停機時間",
             )
-        )
+        ) or any(keyword in query_lower for keyword in ("total", "overall", "summary"))
 
         equipment_id = None
         equipment_match = re.search(r"(?i)eq\s*(\d{3})", query)
@@ -603,16 +611,53 @@ class RAGKnowledgeBase:
         year_match = re.search(r"(20\d{2})\s*年", query)
         if year_match:
             year = year_match.group(1)
+        else:
+            year_match = re.search(r"(20\d{2})", query)
+            if year_match:
+                year = year_match.group(1)
 
         month = None
         month_match = re.search(r"(1[0-2]|0?[1-9])\s*月", query)
         if month_match:
             month = str(int(month_match.group(1)))
+        else:
+            month_zh_match = re.search(r"([正一二三四五六七八九十]{1,3})\s*月", query)
+            if month_zh_match:
+                raw_month = month_zh_match.group(1)
+                month_map = {
+                    "正": 1,
+                    "一": 1,
+                    "二": 2,
+                    "三": 3,
+                    "四": 4,
+                    "五": 5,
+                    "六": 6,
+                    "七": 7,
+                    "八": 8,
+                    "九": 9,
+                    "十": 10,
+                    "十一": 11,
+                    "十二": 12,
+                }
+                month_value = month_map.get(raw_month)
+                if month_value is None and raw_month.startswith("十") and len(raw_month) == 2:
+                    # e.g. "十三" should not happen for months, but handle safely.
+                    tail = {"一": 1, "二": 2}.get(raw_month[1])
+                    if tail:
+                        month_value = 10 + tail
+                if month_value and 1 <= int(month_value) <= 12:
+                    month = str(int(month_value))
 
         quarter = None
-        quarter_match = re.search(r"(?:第\s*)?([1-4])\s*季|\bQ([1-4])\b", query, flags=re.IGNORECASE)
+        quarter_match = re.search(
+            r"(?:第\s*)?([1-4一二三四])\s*(?:季|季度)|\bQ([1-4])\b",
+            query,
+            flags=re.IGNORECASE,
+        )
         if quarter_match:
-            quarter = quarter_match.group(1) or quarter_match.group(2)
+            raw_quarter = quarter_match.group(1) or quarter_match.group(2)
+            quarter_map = {"一": "1", "二": "2", "三": "3", "四": "4"}
+            quarter = quarter_map.get(raw_quarter, raw_quarter)
 
         # Fallback parsing: support "2025-05" / "2025/5" when "年/月" is omitted.
         if not (year and month):
@@ -658,7 +703,10 @@ class RAGKnowledgeBase:
             and grain
             and (not wants_breakdown)
             and (not wants_total)
-            and any(keyword in query for keyword in ("異常", "停機", "downtime"))
+            and (
+                any(keyword in query for keyword in ("異常", "故障", "停機", "停工"))
+                or any(keyword in query_lower for keyword in ("downtime", "abnormal", "fault"))
+            )
         ):
             wants_total = True
 
