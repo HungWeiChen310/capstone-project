@@ -8,7 +8,8 @@ admin_bp = Blueprint('admin', __name__, url_prefix='/admin')
 alarm_bp = Blueprint('alarm', __name__)
 
 # Import routes to register them with the blueprints
-from . import main, admin, alarm  # noqa: E402,F401
+from . import main, admin, alarm, game  # noqa: E402,F401
+from .game import game_bp
 
 
 def register_blueprints(app):
@@ -16,3 +17,4 @@ def register_blueprints(app):
     app.register_blueprint(main_bp)
     app.register_blueprint(admin_bp)
     app.register_blueprint(alarm_bp)
+    app.register_blueprint(game_bp)

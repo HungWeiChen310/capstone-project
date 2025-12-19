@@ -447,6 +447,22 @@ class Database:
                     stats_operational_yearly_cols,
                 )
 
+                # 15. game_scores
+                game_scores_cols = """
+                    [id] INT IDENTITY(1,1) PRIMARY KEY,
+                    [user_id] NVARCHAR(255) NOT NULL,
+                    [score] INT NOT NULL,
+                    [created_at] datetime2(2) DEFAULT GETDATE(),
+                    CONSTRAINT FK_game_scores_user
+                        FOREIGN KEY (user_id)
+                        REFERENCES user_preferences(user_id)
+                """
+                self._create_table_if_not_exists(
+                    init_cur,
+                    "game_scores",
+                    game_scores_cols,
+                )
+
                 # conn.commit() # Handled by _get_connection context manager
                 logger.info("資料庫表格初始化/檢查完成 (已建立主鍵與外鍵約束)。")
 
@@ -1015,6 +1031,53 @@ class Database:
                 return [row[0] for row in cursor.fetchall()]
         except pyodbc.Error as e:
             logger.error(f"取得使用者 {user_id} 訂閱設備失敗: {e}")
+            return []
+
+    def add_game_score(self, user_id, score):
+        """新增遊戲分數"""
+        try:
+            # 確保使用者存在，若不存在則先建立 (避免外鍵錯誤)
+            self.set_user_preference(user_id)
+
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    INSERT INTO game_scores (user_id, score)
+                    VALUES (?, ?);
+                    """,
+                    (user_id, score),
+                )
+            return True
+        except pyodbc.Error as e:
+            logger.exception(f"新增遊戲分數失敗: {e}")
+            return False
+
+    def get_top_scores(self, limit=10):
+        """取得前 10 名高分記錄"""
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    SELECT TOP (?) s.user_id, s.score, p.display_name, s.created_at
+                    FROM game_scores s
+                    LEFT JOIN user_preferences p ON s.user_id = p.user_id
+                    ORDER BY s.score DESC;
+                    """,
+                    (limit,),
+                )
+                results = []
+                for row in cursor.fetchall():
+                    results.append({
+                        "user_id": row[0],
+                        "score": row[1],
+                        "display_name": row[2] or "匿名玩家",
+                        "created_at": row[3]
+                    })
+                return results
+        except pyodbc.Error as e:
+            logger.exception(f"取得排行榜失敗: {e}")
             return []
 
 

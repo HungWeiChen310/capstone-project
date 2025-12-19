@@ -16,6 +16,7 @@ from linebot.v3.messaging import (
 from typing import Callable, List, Tuple
 import logging
 import pyodbc
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +57,11 @@ def __guide() -> TextMessage:
                 title="設備監控功能",
                 text="查看半導體設備的狀態和異常警告。",
                 actions=[MessageAction(label="查看設備狀態", text="設備狀態")],
+            ),
+            CarouselColumn(
+                title="小遊戲",
+                text="閒暇之餘來場貪食蛇放鬆一下吧！",
+                actions=[MessageAction(label="開始玩遊戲", text="玩遊戲")],
             ),
             CarouselColumn(
                 title="語言設定",
@@ -446,6 +452,23 @@ def __my_subscriptions(db, user_id: str) -> TextMessage:
     return reply_message_obj
 
 
+def __play_game() -> TextMessage:
+    """回覆貪食蛇遊戲連結"""
+    liff_id = os.getenv('LIFF_ID')
+    if liff_id:
+        game_url = f"https://liff.line.me/{liff_id}"
+    else:
+        # Fallback if no LIFF ID is set (though user should set it)
+        # Assuming typical setup, but LIFF is preferred.
+        # Use a generic message if not set or just the link.
+        game_url = "請先設定 LIFF_ID 環境變數以啟用遊戲功能。"
+        if os.getenv('HOST'): # Fallback to web link if host is known, for testing
+             game_url = f"https://{os.getenv('HOST')}/game/snake"
+
+    reply_message_obj = TextMessage(text=f"點擊連結開始貪食蛇遊戲：\n{game_url}")
+    return reply_message_obj
+
+
 def __equipment_details(text: str, db, user_id: str) -> TextMessage:
     parts = text.split(maxsplit=1)
     if len(parts) < 2 or not parts[1].strip():
@@ -560,6 +583,7 @@ __commands = {
     "language": __language, "語言": __language,
     "設備狀態": __equipment_status, "機台狀態": __equipment_status, "equipment status": __equipment_status,
     "我的訂閱": __my_subscriptions, "my subscriptions": __my_subscriptions,
+    "玩遊戲": __play_game, "play game": __play_game, "game": __play_game,
 }
 
 # Improved regex-like matching using simpler string checks for now, can be upgraded to full regex if needed

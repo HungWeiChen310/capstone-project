@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>貪食蛇遊戲</title>
+    <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            text-align: center;
+            background-color: #2c3e50;
+            color: #ecf0f1;
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            touch-action: none;
+        }
+        canvas {
+            border: 2px solid #ecf0f1;
+            background-color: #34495e;
+            box-shadow: 0 0 20px rgba(0,0,0,0.5);
+        }
+        #score {
+            font-size: 24px;
+            margin-bottom: 10px;
+        }
+        #message {
+            margin-top: 10px;
+            color: #e74c3c;
+            height: 20px;
+        }
+        #controls {
+            margin-top: 20px;
+            display: none; /* Hidden by default, shown on mobile if needed, but swipe is better */
+        }
+        .btn {
+            background-color: #27ae60;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
+            border-radius: 5px;
+            margin: 5px;
+        }
+        .btn:active {
+            background-color: #2ecc71;
+        }
+        #leaderboard {
+            display: none;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.9);
+            padding: 20px;
+            border-radius: 10px;
+            width: 80%;
+            max-width: 400px;
+            z-index: 10;
+        }
+        #leaderboard table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        #leaderboard th, #leaderboard td {
+            padding: 8px;
+            text-align: left;
+            border-bottom: 1px solid #7f8c8d;
+        }
+        #restartBtn {
+            margin-top: 20px;
+        }
+        #startScreen {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.8);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 20;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="score">分數: 0</div>
+    <canvas id="gameCanvas" width="320" height="320"></canvas>
+    <div id="message"></div>
+
+    <div id="startScreen">
+        <h1>貪食蛇</h1>
+        <p id="userInfo">載入中...</p>
+        <button class="btn" onclick="startGame()">開始遊戲</button>
+    </div>
+
+    <div id="leaderboard">
+        <h2>排行榜</h2>
+        <div id="leaderboardList"></div>
+        <button class="btn" id="restartBtn" onclick="resetGame()">再玩一次</button>
+        <button class="btn" onclick="liff.closeWindow()">關閉</button>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const gridSize = 20;
+        let tileCount = canvas.width / gridSize;
+
+        // Adjust canvas size for mobile
+        function resizeCanvas() {
+            const size = Math.min(window.innerWidth - 40, 400);
+            // Snap to grid
+            const snappedSize = Math.floor(size / gridSize) * gridSize;
+            canvas.width = snappedSize;
+            canvas.height = snappedSize;
+            tileCount = snappedSize / gridSize;
+        }
+        resizeCanvas();
+
+        let score = 0;
+        let snake = [];
+        let food = { x: 10, y: 10 };
+        let dx = 0;
+        let dy = 0;
+        let intervalId;
+        let userId = null;
+        let displayName = "";
+        let isGameRunning = false;
+
+        // Initialize LIFF
+        const liffId = "{{ liff_id }}";
+
+        async function initLiff() {
+            if (!liffId || liffId === "None") {
+                document.getElementById('userInfo').innerText = "未設定 LIFF ID (測試模式)";
+                // Generate a random ID for testing if no LIFF
+                userId = "test_user_" + Math.floor(Math.random() * 1000);
+                displayName = "測試玩家";
+                return;
+            }
+
+            try {
+                await liff.init({ liffId: liffId });
+                if (!liff.isLoggedIn()) {
+                    liff.login();
+                    return;
+                }
+                const profile = await liff.getProfile();
+                userId = profile.userId;
+                displayName = profile.displayName;
+                document.getElementById('userInfo').innerText = `你好, ${displayName}!`;
+            } catch (err) {
+                console.error('LIFF Init Error:', err);
+                document.getElementById('userInfo').innerText = "LIFF 初始化失敗";
+            }
+        }
+        initLiff();
+
+        function startGame() {
+            document.getElementById('startScreen').style.display = 'none';
+            document.getElementById('leaderboard').style.display = 'none';
+            resetGameState();
+            isGameRunning = true;
+            intervalId = setInterval(gameLoop, 150); // Speed
+        }
+
+        function resetGameState() {
+            snake = [{x: 10, y: 10}, {x: 9, y: 10}, {x: 8, y: 10}];
+            score = 0;
+            dx = 1;
+            dy = 0;
+            document.getElementById('score').innerText = `分數: ${score}`;
+            document.getElementById('message').innerText = "";
+            spawnFood();
+        }
+
+        function spawnFood() {
+            food = {
+                x: Math.floor(Math.random() * tileCount),
+                y: Math.floor(Math.random() * tileCount)
+            };
+            // Prevent spawning on snake
+            for(let cell of snake) {
+                if (cell.x === food.x && cell.y === food.y) {
+                    spawnFood();
+                    break;
+                }
+            }
+        }
+
+        function gameLoop() {
+            update();
+            draw();
+        }
+
+        function update() {
+            const head = { x: snake[0].x + dx, y: snake[0].y + dy };
+
+            // Wall Collision
+            if (head.x < 0 || head.x >= tileCount || head.y < 0 || head.y >= tileCount) {
+                gameOver();
+                return;
+            }
+
+            // Self Collision
+            for (let cell of snake) {
+                if (head.x === cell.x && head.y === cell.y) {
+                    gameOver();
+                    return;
+                }
+            }
+
+            snake.unshift(head);
+
+            // Eat Food
+            if (head.x === food.x && head.y === food.y) {
+                score += 10;
+                document.getElementById('score').innerText = `分數: ${score}`;
+                spawnFood();
+            } else {
+                snake.pop();
+            }
+        }
+
+        function draw() {
+            // Clear screen
+            ctx.fillStyle = '#34495e';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Draw Snake
+            ctx.fillStyle = '#2ecc71';
+            for (let cell of snake) {
+                ctx.fillRect(cell.x * gridSize, cell.y * gridSize, gridSize - 2, gridSize - 2);
+            }
+
+            // Draw Food
+            ctx.fillStyle = '#e74c3c';
+            ctx.fillRect(food.x * gridSize, food.y * gridSize, gridSize - 2, gridSize - 2);
+        }
+
+        async function gameOver() {
+            isGameRunning = false;
+            clearInterval(intervalId);
+            document.getElementById('message').innerText = "遊戲結束!";
+
+            // Submit Score
+            if (userId) {
+                try {
+                    await fetch('/api/score', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ user_id: userId, score: score })
+                    });
+                } catch (e) {
+                    console.error("Score submission failed", e);
+                }
+            }
+
+            showLeaderboard();
+        }
+
+        async function showLeaderboard() {
+            const lbDiv = document.getElementById('leaderboard');
+            const listDiv = document.getElementById('leaderboardList');
+            lbDiv.style.display = 'block';
+            listDiv.innerHTML = "載入中...";
+
+            try {
+                const res = await fetch('/api/leaderboard?limit=5');
+                const data = await res.json();
+
+                listDiv.innerHTML = ''; // Clear loading
+                const table = document.createElement('table');
+
+                // Header
+                const headerRow = document.createElement('tr');
+                ['排名', '玩家', '分數'].forEach(text => {
+                    const th = document.createElement('th');
+                    th.textContent = text;
+                    headerRow.appendChild(th);
+                });
+                table.appendChild(headerRow);
+
+                if (data.length === 0) {
+                    const p = document.createElement('p');
+                    p.textContent = "暫無紀錄";
+                    listDiv.appendChild(p);
+                } else {
+                    data.forEach((entry, index) => {
+                        const row = document.createElement('tr');
+
+                        const rankCell = document.createElement('td');
+                        rankCell.textContent = index + 1;
+                        row.appendChild(rankCell);
+
+                        const nameCell = document.createElement('td');
+                        nameCell.textContent = entry.display_name; // Safe XSS prevention
+                        row.appendChild(nameCell);
+
+                        const scoreCell = document.createElement('td');
+                        scoreCell.textContent = entry.score;
+                        row.appendChild(scoreCell);
+
+                        table.appendChild(row);
+                    });
+                    listDiv.appendChild(table);
+                }
+            } catch (e) {
+                listDiv.textContent = "載入失敗";
+            }
+        }
+
+        function resetGame() {
+            document.getElementById('leaderboard').style.display = 'none';
+            startGame();
+        }
+
+        // Input Handling
+        document.addEventListener('keydown', (e) => {
+            if (!isGameRunning) return;
+            switch(e.key) {
+                case 'ArrowUp': if (dy !== 1) { dx = 0; dy = -1; } break;
+                case 'ArrowDown': if (dy !== -1) { dx = 0; dy = 1; } break;
+                case 'ArrowLeft': if (dx !== 1) { dx = -1; dy = 0; } break;
+                case 'ArrowRight': if (dx !== -1) { dx = 1; dy = 0; } break;
+            }
+        });
+
+        // Touch Handling (Swipe)
+        let touchStartX = 0;
+        let touchStartY = 0;
+
+        canvas.addEventListener('touchstart', (e) => {
+            touchStartX = e.touches[0].clientX;
+            touchStartY = e.touches[0].clientY;
+            e.preventDefault();
+        }, {passive: false});
+
+        canvas.addEventListener('touchmove', (e) => {
+             e.preventDefault(); // Prevent scrolling
+        }, {passive: false});
+
+        canvas.addEventListener('touchend', (e) => {
+            if (!isGameRunning) return;
+            const touchEndX = e.changedTouches[0].clientX;
+            const touchEndY = e.changedTouches[0].clientY;
+
+            const diffX = touchEndX - touchStartX;
+            const diffY = touchEndY - touchStartY;
+
+            if (Math.abs(diffX) > Math.abs(diffY)) {
+                // Horizontal
+                if (diffX > 0 && dx !== -1) { dx = 1; dy = 0; }
+                else if (diffX < 0 && dx !== 1) { dx = -1; dy = 0; }
+            } else {
+                // Vertical
+                if (diffY > 0 && dy !== -1) { dx = 0; dy = 1; }
+                else if (diffY < 0 && dy !== 1) { dx = 0; dy = -1; }
+            }
+            e.preventDefault();
+        }, {passive: false});
+
+    </script>
+</body>
+</html>
