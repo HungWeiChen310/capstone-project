@@ -1112,9 +1112,15 @@ class RAGKnowledgeBase:
             if path.is_file() and self._is_allowed_file(path):
                 yield path
             elif path.is_dir():
-                for child in path.rglob("*"):
-                    if child.is_file() and self._is_allowed_file(child):
-                        yield child
+                # Use os.walk to efficiently skip hidden/ignored directories
+                for root, dirs, files in os.walk(path):
+                    # Modify dirs in-place to skip unwanted directories
+                    dirs[:] = [d for d in dirs if not d.startswith(".") and d != "__pycache__"]
+
+                    for file in files:
+                        file_path = Path(root) / file
+                        if self._is_allowed_file(file_path):
+                            yield file_path
 
     def _is_allowed_file(self, file_path: Path) -> bool:
         if file_path.name.startswith("."):
